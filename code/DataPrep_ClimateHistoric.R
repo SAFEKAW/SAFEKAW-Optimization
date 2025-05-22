@@ -8,7 +8,7 @@
 # 
 # CSV files created are:
 #  County CSV file: ClimateData_County.csv
-#  | Year | Month | County | precip_mm | {otherClimateVars}
+#  | Year | Month | FIPS | precip_mm | {otherClimateVars}
 #  
 #  EKSRB CSV file: ClimateData_EKSRB.csv
 #  | Year | Month | precip_mm | {otherClimateVars}

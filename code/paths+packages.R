@@ -7,6 +7,7 @@ library(sf)
 library(terra)
 library(patchwork)
 library(lubridate)
+library(readxl)
 
 # path to SAFEKAW google drive data folder
 path_data <- file.path("G:/My Drive/Projects-Active/SAFEKAW/Data")
@@ -14,6 +15,13 @@ path_data <- file.path("G:/My Drive/Projects-Active/SAFEKAW/Data")
 # common CRS for everything: EPSG:26915 - https://epsg.io/26915
 #  domain spans border of UTM14 and UTM15 so use 15
 domain_crs <- st_crs(26915)
+
+# common unit conversions
+ha_per_ac <- 0.40468564219999997311
+yield_conversion <-
+  data.frame(Crop = c("Wheat", "Corn", "Grain Sorghum", "Soybeans"),
+             kg_per_bushel = c(27.2155, 25.4012, 25.4012, 27.2155))
+
 
 ## plotting controls
 # ggplot theme

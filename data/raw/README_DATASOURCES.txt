@@ -1,0 +1,2 @@
+YieldCorrelationTool_2025.xlsx = K-State crop yield correlation tool which includes historic county-level crop yield data from USDA RMA
+ - Downloaded on 5/22/2025 from https://www.agmanager.info/crop-insurance/crop-insurance-papers-and-information/kansas-yield-correlation-tool
