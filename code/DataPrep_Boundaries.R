@@ -23,6 +23,10 @@ source(file.path("code", "paths+packages.R"))
 sf_watershed_in <- st_read(file.path(path_data, "Boundaries", "WatershedBoundary_KN_20230113", "watershed_bndry.shp"))
 sf_counties_in <- st_read(file.path(path_data, "Boundaries", "CountiesSelection_KN_20230113", "counties selection.shp"))
 sf_corridor_in <- st_read(file.path(path_data, "Boundaries", "kaw_valley_dtf", "kaw_valley_dtf.shp"))
+# NOTE ABOUT CORRIDOR: 
+#  There is a 'kaw_valley_dtf.shp' that Shreya added to Drive based on depth-to-flood data, created by Geoff. 
+#  This is very similar to the 'KRiver_AA' shapefile that Gaurav created, but does not extend as far west.
+#  We will use the kaw_valley_dtf.shp for consistency wih Shreya and other KGS work.
 
 # Process shapefiles -------------------------------------------------------
 
