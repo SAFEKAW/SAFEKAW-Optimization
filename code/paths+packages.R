@@ -8,6 +8,7 @@ library(terra)
 library(patchwork)
 library(lubridate)
 library(readxl)
+library(cdlTools)
 
 # path to SAFEKAW google drive data folder
 path_data <- file.path("G:/My Drive/Projects-Active/SAFEKAW/Data")

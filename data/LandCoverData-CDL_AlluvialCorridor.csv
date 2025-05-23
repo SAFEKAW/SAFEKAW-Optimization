@@ -1,0 +1,229 @@
+Year,LandCover,area_ha
+2006,Corn,18688.0512
+2006,Developed,15397.76
+2006,Double Crop,374.752
+2006,Fallow/Barren,830.4128000000001
+2006,Forest,6354.4767999999995
+2006,Grass/Pasture/Shrubland,11082.9376
+2006,Other Crops,439.66720000000004
+2006,Sorghum,602.112
+2006,Soybeans,25137.8624
+2006,Water,6033.0368
+2006,Wetlands,1413.0816
+2006,Wheat,1203.9104
+2007,Corn,24654.6048
+2007,Developed,17116.601599999998
+2007,Double Crop,667.0272
+2007,Fallow/Barren,620.3008
+2007,Forest,6719.5072
+2007,Grass/Pasture/Shrubland,7204.019200000001
+2007,Other Crops,142.68800000000002
+2007,Sorghum,735.7056
+2007,Soybeans,18722.2336
+2007,Water,7147.2576
+2007,Wetlands,2039.0272000000002
+2007,Wheat,1789.088
+2008,Corn,21865.5
+2008,Developed,14910.210000000001
+2008,Double Crop,649.53
+2008,Fallow/Barren,224.82
+2008,Forest,5895.27
+2008,Grass/Pasture/Shrubland,10611.45
+2008,Other Crops,543.6
+2008,Sorghum,436.32
+2008,Soybeans,21954.69
+2008,Water,6798.42
+2008,Wetlands,1419.48
+2008,Wheat,1467.81
+2009,Corn,24357.15
+2009,Developed,14518.44
+2009,Double Crop,609.3
+2009,Fallow/Barren,207.63
+2009,Forest,5460.93
+2009,Grass/Pasture/Shrubland,9885.24
+2009,Other Crops,440.19
+2009,Sorghum,492.03
+2009,Soybeans,21129.12
+2009,Water,6749.37
+2009,Wetlands,1810.62
+2009,Wheat,1117.08
+2010,Corn,21121.92
+2010,Developed,14163.57
+2010,Double Crop,235.35
+2010,Fallow/Barren,349.74
+2010,Forest,5484.42
+2010,Grass/Pasture/Shrubland,12097.8
+2010,Other Crops,161.73
+2010,Sorghum,224.73
+2010,Soybeans,22257.45
+2010,Water,7466.13
+2010,Wetlands,2643.66
+2010,Wheat,570.6
+2011,Corn,24629.76
+2011,Developed,14846.04
+2011,Double Crop,230.85
+2011,Fallow/Barren,661.95
+2011,Forest,5538.33
+2011,Grass/Pasture/Shrubland,8704.17
+2011,Other Crops,273.33
+2011,Sorghum,245.16
+2011,Soybeans,22299.48
+2011,Water,6177.78
+2011,Wetlands,2397.5099999999998
+2011,Wheat,772.74
+2012,Corn,22983.75
+2012,Developed,14940.810000000001
+2012,Double Crop,260.82
+2012,Fallow/Barren,563.76
+2012,Forest,6201.18
+2012,Grass/Pasture/Shrubland,9930.150000000001
+2012,Other Crops,210.6
+2012,Sorghum,102.33
+2012,Soybeans,23016.24
+2012,Water,6102.63
+2012,Wetlands,1891.26
+2012,Wheat,573.57
+2013,Corn,25220.7
+2013,Developed,14533.919999999998
+2013,Double Crop,503.01
+2013,Fallow/Barren,1136.7
+2013,Forest,5706
+2013,Grass/Pasture/Shrubland,6288.39
+2013,Other Crops,1410.66
+2013,Sorghum,240.57
+2013,Soybeans,22360.59
+2013,Water,6066.45
+2013,Wetlands,2066.31
+2013,Wheat,1243.8
+2014,Corn,23251.32
+2014,Developed,15175.89
+2014,Double Crop,260.91
+2014,Fallow/Barren,661.5899999999999
+2014,Forest,6294.0599999999995
+2014,Grass/Pasture/Shrubland,8405.82
+2014,Other Crops,612.45
+2014,Sorghum,117.18
+2014,Soybeans,22901.85
+2014,Water,6748.83
+2014,Wetlands,1778.22
+2014,Wheat,568.98
+2015,Corn,24674.4
+2015,Developed,14771.61
+2015,Double Crop,323.73
+2015,Fallow/Barren,1050.75
+2015,Forest,6065.82
+2015,Grass/Pasture/Shrubland,6922.98
+2015,Other Crops,644.49
+2015,Sorghum,554.85
+2015,Soybeans,22286.07
+2015,Water,6583.41
+2015,Wetlands,2004.39
+2015,Wheat,894.6
+2016,Corn,25034.76
+2016,Developed,14724.63
+2016,Double Crop,209.07
+2016,Fallow/Barren,678.06
+2016,Forest,6055.02
+2016,Grass/Pasture/Shrubland,6919.29
+2016,Other Crops,727.11
+2016,Sorghum,757.44
+2016,Soybeans,22356.27
+2016,Water,6678.99
+2016,Wetlands,1949.22
+2016,Wheat,687.24
+2017,Corn,22590.81
+2017,Developed,14780.25
+2017,Double Crop,243.36
+2017,Fallow/Barren,426.87
+2017,Forest,6548.49
+2017,Grass/Pasture/Shrubland,6702.3
+2017,Other Crops,668.97
+2017,Sorghum,295.65
+2017,Soybeans,25882.11
+2017,Water,6711.66
+2017,Wetlands,1613.25
+2017,Wheat,313.38
+2018,Corn,22995.54
+2018,Developed,14700.51
+2018,Double Crop,310.5
+2018,Fallow/Barren,589.86
+2018,Forest,5221.17
+2018,Grass/Pasture/Shrubland,6389.91
+2018,Other Crops,813.0600000000001
+2018,Sorghum,130.86
+2018,Soybeans,25448.4
+2018,Water,6836.31
+2018,Wetlands,2871.63
+2018,Wheat,469.35
+2019,Corn,24267.78
+2019,Developed,13973.85
+2019,Double Crop,220.86
+2019,Fallow/Barren,1618.74
+2019,Forest,7644.6900000000005
+2019,Grass/Pasture/Shrubland,5536.17
+2019,Other Crops,918.54
+2019,Sorghum,439.65
+2019,Soybeans,22988.43
+2019,Water,6889.77
+2019,Wetlands,1494.9
+2019,Wheat,783.72
+2020,Corn,24982.02
+2020,Developed,13977.36
+2020,Double Crop,164.43
+2020,Fallow/Barren,400.77
+2020,Forest,7879.14
+2020,Grass/Pasture/Shrubland,5792.4000000000005
+2020,Other Crops,944.64
+2020,Sorghum,414.9
+2020,Soybeans,23701.23
+2020,Water,6949.44
+2020,Wetlands,1242.81
+2020,Wheat,327.96
+2021,Corn,24982.02
+2021,Developed,13977.36
+2021,Double Crop,164.43
+2021,Fallow/Barren,400.77
+2021,Forest,7879.14
+2021,Grass/Pasture/Shrubland,5792.4000000000005
+2021,Other Crops,944.64
+2021,Sorghum,414.9
+2021,Soybeans,23701.23
+2021,Water,6949.44
+2021,Wetlands,1242.81
+2021,Wheat,327.96
+2022,Corn,23558.04
+2022,Developed,14321.79
+2022,Double Crop,301.14000000000004
+2022,Fallow/Barren,320.31
+2022,Forest,6520.32
+2022,Grass/Pasture/Shrubland,6744.87
+2022,Other Crops,855.9
+2022,Sorghum,557.82
+2022,Soybeans,24583.68
+2022,Water,6973.11
+2022,Wetlands,1676.8799999999999
+2022,Wheat,363.24
+2023,Corn,22816.44
+2023,Developed,14382.63
+2023,Double Crop,417.51000000000005
+2023,Fallow/Barren,327.06
+2023,Forest,6702.389999999999
+2023,Grass/Pasture/Shrubland,7104.240000000001
+2023,Other Crops,647.64
+2023,Sorghum,351.63
+2023,Soybeans,25227.18
+2023,Water,6929.01
+2023,Wetlands,1573.3799999999999
+2023,Wheat,297.99
+2024,Corn,24385.5
+2024,Developed,13114.349999999999
+2024,Double Crop,521.8199999999999
+2024,Fallow/Barren,571.95
+2024,Forest,8349.93
+2024,Grass/Pasture/Shrubland,9900.9
+2024,Other Crops,317.16
+2024,Sorghum,213.84
+2024,Soybeans,22626.27
+2024,Water,6286.5
+2024,Wetlands,170.01
+2024,Wheat,318.87
