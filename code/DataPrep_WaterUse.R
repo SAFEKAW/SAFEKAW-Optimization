@@ -33,12 +33,8 @@ sf_watershed <- st_read(file.path("data", "Boundary_EKSRBwatershed.gpkg"))
 # box defined by the EKSRB watershed (so includes some data beyond the EKSRB extent)
 df_wimas_in <- 
   read_csv(file.path(path_data, "Water", "WaterUse", "wimas_eksrb_1957_2023.csv")) |> 
-  # get rid of missing lat/long
-  filter(!is.na(lat) & !is.na(lon)) |>
   # subset to years of interest
   filter(year >= 1990 & year <= 2023)
-
-# Bowersock is pdiv_id 76439
 
 # convert to sf using lat/long
 sf_wimas_in <- 
@@ -48,9 +44,9 @@ sf_wimas_in <-
 
 # plot and inspect
 ggplot() +
-  geom_sf(data = sf_watershed) +
+  geom_sf(data = sf_counties) +
+  geom_sf(data = sf_watershed, fill = NA, color = col.cat.blu) +
   geom_sf(data = sf_wimas_in, color = col.cat.red)
-
 
 # exclude WTR (enormous) and categories representing <1% of total use
 # sum total water use and water use by sector for each year
@@ -79,7 +75,7 @@ ggplot(df_wimas_in_sector, aes(x = WaterUse_Sector_prc*100)) +
   facet_wrap(~use, scales = "free_x")
 
 # exclude uses
-use_to_exclude <- c("WTR", "AR", "CON", "DEW", "DOM", "FPR", "SED", "STK", "THX")
+use_to_exclude <- c("WTR", "AR", "CON", "DEW", "DOM", "FPR", "HYD", "SED", "STK", "THX")
 
 # make trimmed version of df_wimas_in
 sf_wimas_trim <- subset(sf_wimas_in, !use %in% use_to_exclude)
@@ -128,7 +124,6 @@ df_wimas_watershedSectorGW <-
     GWuse_m3 = sum(WaterUse_Total_m3, na.rm = TRUE),
     .groups = "drop"
   )
-
 
 # calculate surface water use in each year by sector
 df_wimas_watershedSectorSW <- 
@@ -254,7 +249,7 @@ sf_wimas_counties |>
 focus_crops <- c(2, 3, 4, 5)
 df_cropNames <- data.frame(
   crop_code = c(2, 3, 4, 5),
-  Crop = c("Corn", "Grain Sorghum", "Soybeans", "Wheat")
+  Crop = c("Corn", "Sorghum", "Soybeans", "Wheat")
   )
 
 # calculate applied irrigation for each point
@@ -289,7 +284,7 @@ df_wimas_counties_out <-
   rename(Year = year)
 
 # plot to inspect
-ggplot(df_wimas_counties_points, aes(x = factor(crop_code), y = irrigation_mm)) +
+ggplot(df_wimas_counties_points, aes(x = Crop, y = irrigation_mm)) +
   geom_boxplot()
 
 # save output

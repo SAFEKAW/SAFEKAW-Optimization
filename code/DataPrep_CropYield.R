@@ -48,6 +48,9 @@ df_yield_out <-
   # trim to needed columns
   dplyr::select(Year, FIPS, Crop, WaterManagement, yield_kgHa)
 
+# rename "Grain Sorghum" to "Sorghum" to match CDL and water use
+df_yield_out$Crop[df_yield_out$Crop == "Grain Sorghum"] <- "Sorghum"
+
 # visualize and save ------------------------------------------------------
 
 ggplot(df_yield_out, aes(x = yield_kgHa)) +
