@@ -123,7 +123,20 @@ Climate_Variables <- Climate_Variables %>%
     x = RefET_x,
     y = RefET_y
   )
+
+
+
 Climate_Variables<- Climate_Variables %>% dplyr::select(x,y,combined_data)
+Climate_Variables <- Climate_Variables %>%
+  mutate(
+    combined_data = map(combined_data, ~ .x %>%
+                          rename(
+                            gridmet_tmmx_k = gridmet_tmmx_degC,
+                            gridmet_tmmn_k = gridmet_tmmn_degC
+                          ))
+  )
+
+
 Climate_Variables_sf <- Climate_Variables %>%
   st_as_sf(coords = c("x", "y"), crs = 32614)
 
@@ -150,8 +163,8 @@ compute_monthly_summary <- function(data) {
       #prism_precip_mm = mean(prism_precip_mm, na.rm = TRUE), #this prism data is based nearest method (joining with gridmet)
       gridmet_precip_mm=mean(gridmet_pr_mm, na.rm = TRUE),
       gridmet_etr_mm = mean(gridmet_etr_mm, na.rm = TRUE),
-      gridmet_tmmx_degC = mean(gridmet_tmmx_degC, na.rm = TRUE),
-      gridmet_tmmn_degC = mean(gridmet_tmmn_degC, na.rm = TRUE),
+      gridmet_tmmx_K = mean(gridmet_tmmx_k, na.rm = TRUE),
+      gridmet_tmmn_K = mean(gridmet_tmmn_k, na.rm = TRUE),
       gridmet_srad_wpm2 = mean(gridmet_srad_wpm2, na.rm = TRUE),
       gridmet_wind_mps = mean(gridmet_wind_mps, na.rm = TRUE),
       gridmet_rhmax_pct = mean(gridmet_rhmax_pct, na.rm = TRUE),
@@ -331,9 +344,9 @@ ClimateData_Corridor_combined <- full_join(
   ClimateData_AlluvialCorridor_Gridmet,
   by = c("Year", "Month", "ID", "NAME")
 )
-ClimateData_EKSRB_combined <- st_drop_geometry(ClimateData_EKSRB_combined)
-ClimateData_County_combined <- st_drop_geometry(ClimateData_County_combined)
-ClimateData_Corridor_combined <- st_drop_geometry(ClimateData_Corridor_combined)
+ClimateData_EKSRB_combined <- ClimateData_EKSRB_combined %>% select(-geometry)
+ClimateData_County_combined <- ClimateData_County_combined %>% select(-geometry)
+ClimateData_Corridor_combined <- ClimateData_Corridor_combined %>% select(-geometry)
 
 ClimateData_EKSRB_combined <- ClimateData_EKSRB_combined %>%
   dplyr::select(Year, Month, ID, NAME, everything())
@@ -347,21 +360,21 @@ ClimateData_Corridor_combined <- ClimateData_Corridor_combined %>%
 
 write_xlsx(
   ClimateData_EKSRB_combined,
-  path = file.path(file_Path_Variable_O, "ClimateData_EKSRB_combined.xlsx")
+  path = file.path(file_Path_Variable_O, "ClimateData_EKSRB_combined_PrismGridMet.xlsx")
 )
 
 
 
 write_xlsx(
   ClimateData_County_combined,
-  path = file.path(file_Path_Variable_O, "ClimateData_County_combined.xlsx")
+  path = file.path(file_Path_Variable_O, "ClimateData_County_combined_PrismGridMet.xlsx")
 )
 
 
 
 write_xlsx(
   ClimateData_Corridor_combined,
-  path = file.path(file_Path_Variable_O, "ClimateData_Corridor_combined.xlsx")
+  path = file.path(file_Path_Variable_O, "ClimateData_Corridor_combined_PrismGridMet.xlsx")
 )
 
 
