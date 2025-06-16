@@ -117,6 +117,14 @@ SafeKAW_Region_df <- st_transform(SafeKAW_Region_df, crs = 32614)
 #Gridmet from 1979
 #Combined them, NA where no data 
 
+
+# 
+# For temperature, radiation, and wind it should be monthly mean instead of sum
+# Only ETo and precipitation would be sum  #no idea how to put it in the naming convention 
+
+
+
+
 Climate_Variables <- readRDS(file.path(file_Path_Variable_O, "GridmetAll_WithPrism_6152025.rds"))
 Climate_Variables <- Climate_Variables %>%
   rename(
@@ -386,17 +394,96 @@ write_xlsx(
 
 
 
-ggplot() +
-  geom_point(data = Watershed_df, aes(x = Year, y = prism_precip_mm)) +
-  theme_minimal() +
-  labs(
-    title = "Monthly PRISM Precipitation in EKSRB Watershed",
-    x = "Year",
-    y = "Precipitation (mm)"
+# ggplot() +
+#   geom_point(data = Watershed_df, aes(x = Year, y = prism_precip_mm)) +
+#   theme_minimal() +
+#   labs(
+#     title = "Monthly PRISM Precipitation in EKSRB Watershed",
+#     x = "Year",
+#     y = "Precipitation (mm)"
+#   )
+
+library(dataRetrieval)
+site_numbers <- c("06821500", "06892350")
+site_info <- readNWISsite(site_numbers)
+
+site_info_selected <- site_info %>%
+  select(site_no, station_nm, dec_lat_va, dec_long_va)
+
+site_info_selected <- site_info_selected %>%
+  st_as_sf(coords = c("dec_long_va", "dec_lat_va"), crs = 4326) %>%
+  st_transform(32614)
+
+
+Climate_grid_points <- Climate_Variables %>%
+  mutate(id = row_number()) %>%
+  st_as_sf(coords = c("x", "y"), crs = 32614)
+
+
+library(nngeo)
+
+nearest_to_sites <- st_nn(site_info_selected, Climate_grid_points, k = 1, returnDist = TRUE)
+
+site_info_selected$nearest_index <- nearest_to_sites$nn
+site_info_selected$distance_to_nearest <- nearest_to_sites$dist
+
+nearest_climate_data <- Climate_Variables %>%
+  slice(unlist(site_info_selected$nearest_index)) %>%
+  mutate(
+    station_id = site_info_selected$site_no,
+    station_name = site_info_selected$station_nm,
+    distance_to_station_m = unlist(site_info_selected$distance_to_nearest)
   )
 
 
+arikaree_data <- nearest_climate_data %>% filter(station_id == "06821500")
+arikaree_df <- data.frame(arikaree_data$combined_data[[1]])
 
+# De Soto
+desoto_data <- nearest_climate_data %>% filter(station_id == "06892350")
+desoto_df <- data.frame(desoto_data$combined_data[[1]])
+
+
+
+arikaree_data <- nearest_climate_data %>% filter(station_id == "06821500")
+arikaree_df <- data.frame(arikaree_data$combined_data[[1]])
+
+# De Soto
+desoto_data <- nearest_climate_data %>% filter(station_id == "06892350")
+desoto_df <- data.frame(desoto_data$combined_data[[1]])
+
+
+
+library(tidyr)
+library(dplyr)
+library(ggplot2)
+
+# Add station name to each dataframe
+arikaree_df <- data.frame(arikaree_data$combined_data[[1]]) %>%
+  mutate(Station = "Arikaree River (06821500)")
+
+desoto_df <- data.frame(desoto_data$combined_data[[1]]) %>%
+  mutate(Station = "Kansas River at DeSoto (06892350)")
+
+# Combine the two
+combined_df <- bind_rows(arikaree_df, desoto_df)
+
+# Reshape to long format
+combined_long <- combined_df %>%
+  pivot_longer(
+    cols = -c(Date, Station),
+    names_to = "Variable",
+    values_to = "Value"
+  )
+
+ggplot(combined_long, aes(x = Date, y = Value, color = Station)) +
+  geom_line(size = 0.8) +
+  facet_wrap(~ Variable, scales = "free_y", ncol = 2) +
+  theme_minimal(base_size = 14) +
+  labs(
+    title = "Climate Variables at Arikaree and DeSoto Stations",
+    x = "Date", y = "Value", color = "Station"
+  )
 
 
 # 
