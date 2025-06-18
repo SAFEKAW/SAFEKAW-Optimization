@@ -449,7 +449,6 @@ nearest_climate_data <- Climate_Variables %>%
 arikaree_data <- nearest_climate_data %>% filter(station_id == "06821500")
 arikaree_df <- data.frame(arikaree_data$combined_data[[1]])
 
-# De Soto
 desoto_data <- nearest_climate_data %>% filter(station_id == "06892350")
 desoto_df <- data.frame(desoto_data$combined_data[[1]])
 
@@ -458,27 +457,19 @@ desoto_df <- data.frame(desoto_data$combined_data[[1]])
 arikaree_data <- nearest_climate_data %>% filter(station_id == "06821500")
 arikaree_df <- data.frame(arikaree_data$combined_data[[1]])
 
-# De Soto
 desoto_data <- nearest_climate_data %>% filter(station_id == "06892350")
 desoto_df <- data.frame(desoto_data$combined_data[[1]])
 
 
 
-library(tidyr)
-library(dplyr)
-library(ggplot2)
-
-# Add station name to each dataframe
 arikaree_df <- data.frame(arikaree_data$combined_data[[1]]) %>%
   mutate(Station = "Arikaree River (06821500)")
 
 desoto_df <- data.frame(desoto_data$combined_data[[1]]) %>%
   mutate(Station = "Kansas River at DeSoto (06892350)")
 
-# Combine the two
 combined_df <- bind_rows(arikaree_df, desoto_df)
 
-# Reshape to long format
 combined_long <- combined_df %>%
   pivot_longer(
     cols = -c(Date, Station),
