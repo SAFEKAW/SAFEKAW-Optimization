@@ -168,16 +168,17 @@ compute_monthly_summary <- function(data) {
     ) %>%
     group_by(Year, Month) %>%
     summarise(
-      #prism_precip_mm = mean(prism_precip_mm, na.rm = TRUE), #this prism data is based nearest method (joining with gridmet)
-      gridmet_precip_mm=mean(gridmet_pr_mm, na.rm = TRUE),
-      gridmet_etr_mm = mean(gridmet_etr_mm, na.rm = TRUE),
-      gridmet_tmmx_K = mean(gridmet_tmmx_k, na.rm = TRUE),
-      gridmet_tmmn_K = mean(gridmet_tmmn_k, na.rm = TRUE),
-      gridmet_srad_wpm2 = mean(gridmet_srad_wpm2, na.rm = TRUE),
-      gridmet_wind_mps = mean(gridmet_wind_mps, na.rm = TRUE),
-      gridmet_rhmax_pct = mean(gridmet_rhmax_pct, na.rm = TRUE),
-      gridmet_rhmin_pct = mean(gridmet_rhmin_pct, na.rm = TRUE),
-      gridmet_vpd_kpa = mean(gridmet_vpd_kpa, na.rm = TRUE),
+      precip_mm_gridmet = mean(gridmet_pr_mm, na.rm = TRUE),
+      etr_mm_gridmet = mean(gridmet_etr_mm, na.rm = TRUE),
+      tmmx_K_gridmet = mean(gridmet_tmmx_k, na.rm = TRUE),
+      tmmn_K_gridmet = mean(gridmet_tmmn_k, na.rm = TRUE),
+      tmmx_C_gridmet = mean(gridmet_tmmx_k - 273.15, na.rm = TRUE),
+      tmmn_C_gridmet = mean(gridmet_tmmn_k - 273.15, na.rm = TRUE),
+      srad_wpm2_gridmet = mean(gridmet_srad_wpm2, na.rm = TRUE),
+      wind_mps_gridmet = mean(gridmet_wind_mps, na.rm = TRUE),
+      rhmax_pct_gridmet = mean(gridmet_rhmax_pct, na.rm = TRUE),
+      rhmin_pct_gridmet = mean(gridmet_rhmin_pct, na.rm = TRUE),
+      vpd_kpa_gridmet = mean(gridmet_vpd_kpa, na.rm = TRUE),
       .groups = "drop"
     )
 }
@@ -294,7 +295,7 @@ for (i in 1:nrow(SafeKAW_Region_df)) {
   annual_precip_trend_df <- data.frame(
     Year = year(Precipitation_Summary$YearMonth),
     Month = month(Precipitation_Summary$YearMonth),
-    Prism_precip_mm = Precipitation_Summary$monthly_avg
+    precip_mm_prism = Precipitation_Summary$monthly_avg
   )
   
   annual_precip_trend_df$ID <- SafeKAW_Region_df$ID[i]
@@ -366,23 +367,32 @@ ClimateData_Corridor_combined <- ClimateData_Corridor_combined %>%
   dplyr::select(Year, Month, ID, NAME, everything())
 
 
+
+ClimateData_EKSRB_combined <- ClimateData_EKSRB_combined %>% select(-NAME,-ID)
+ClimateData_County_combined <- ClimateData_County_combined %>% select(-NAME)
+ClimateData_Corridor_combined <- ClimateData_Corridor_combined %>% select(-NAME,-ID)
+
+
+
+ClimateData_County_combined<- ClimateData_County_combined %>% rename(FIPS=ID)
+
 write_xlsx(
   ClimateData_EKSRB_combined,
-  path = file.path(file_Path_Variable_O, "ClimateData_EKSRB_combined_PrismGridMet.xlsx")
+  path = file.path(file_Path_Variable_O, "ClimateData_EKSRB.xlsx")
 )
 
 
 
 write_xlsx(
   ClimateData_County_combined,
-  path = file.path(file_Path_Variable_O, "ClimateData_County_combined_PrismGridMet.xlsx")
+  path = file.path(file_Path_Variable_O, "ClimateData_County.xlsx")
 )
 
 
 
 write_xlsx(
   ClimateData_Corridor_combined,
-  path = file.path(file_Path_Variable_O, "ClimateData_Corridor_combined_PrismGridMet.xlsx")
+  path = file.path(file_Path_Variable_O, "ClimateData_Corridor.xlsx")
 )
 
 
