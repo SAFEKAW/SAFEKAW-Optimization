@@ -26,6 +26,7 @@ df_yield_raw <- read_xlsx(file.path("data", "raw", "YieldCorrelationTool_2025.xl
 #  Column K: Irrigation practice
 #  Column X: Year
 #  Column U: Yield
+#  Column W: Detrended Yield
 
 # process yield data ------------------------------------
 
@@ -40,13 +41,17 @@ df_yield_out <-
     Crop = "Commodity Name",
     Year = "Yield Year...24",
     WaterManagement = "Irrigation Practice Name",
-    yield_buAc = "Yield Amount"
+    yield_buAc = "Yield Amount",
+    yield_buAc_detrended = "Detrended Yield Amount"
   ))) |> 
   # convert to kg/ha
   left_join(yield_conversion, by = "Crop") |> 
-  mutate(yield_kgHa = yield_buAc*kg_per_bushel/ha_per_ac) |> 
+  mutate(yield_kgHa = yield_buAc*kg_per_bushel/ha_per_ac,
+         yield_kcalHa = yield_kgHa*kcal_per_kg,
+         yield_kgHa_detrended = yield_buAc_detrended*kg_per_bushel/ha_per_ac,
+         yield_kcalHa_detrended = yield_kgHa_detrended*kcal_per_kg) |> 
   # trim to needed columns
-  dplyr::select(Year, FIPS, Crop, WaterManagement, yield_kgHa)
+  dplyr::select(Year, FIPS, Crop, WaterManagement, yield_kgHa, yield_kcalHa, yield_kgHa_detrended, yield_kcalHa_detrended)
 
 # rename "Grain Sorghum" to "Sorghum" to match CDL and water use
 df_yield_out$Crop[df_yield_out$Crop == "Grain Sorghum"] <- "Sorghum"
@@ -56,5 +61,9 @@ df_yield_out$Crop[df_yield_out$Crop == "Grain Sorghum"] <- "Sorghum"
 ggplot(df_yield_out, aes(x = yield_kgHa)) +
   geom_histogram() + 
   facet_grid(WaterManagement~Crop, scales = "free_x")
+
+ggplot(df_yield_out, aes(x = yield_kcalHa)) +
+  geom_histogram() + 
+  facet_grid(WaterManagement~Crop)
 
 write_csv(df_yield_out, file.path("data", "CropYieldData_County.csv"))

@@ -18,10 +18,15 @@ path_data <- file.path("G:/My Drive/Projects-Active/SAFEKAW/Data")
 domain_crs <- st_crs(26915)
 
 # common unit conversions
+# source (kg/bushel): 
+#         Weights, Measures, and Conversion Factors for Agricultural Commodities and Their Products
+#         https://www.ers.usda.gov/publications/pub-details?pubid=41881
+# source (cal/tonne): Cassidy et al. (2013), SI table 2 https://iopscience.iop.org/article/10.1088/1748-9326/8/3/034015
 ha_per_ac <- 0.40468564219999997311
 yield_conversion <-
   data.frame(Crop = c("Wheat", "Corn", "Grain Sorghum", "Soybeans"),
-             kg_per_bushel = c(27.2155, 25.4012, 25.4012, 27.2155))
+             kg_per_bushel = c(27.2155, 25.4012, 25.4012, 27.2155),
+             kcal_per_kg = c(3.284, 3.581, 3.430, 3.596)) # 1000 kg per tonne, 1000 cal per kcal
 
 
 ## plotting controls
