@@ -137,7 +137,7 @@ Climate_Variables <- Climate_Variables %>%
 Climate_Variables<- Climate_Variables %>% dplyr::select(x,y,combined_data)
 Climate_Variables <- Climate_Variables %>%
   mutate(
-    combined_data = map(combined_data, ~ .x %>%
+    combined_data = purrr::map(combined_data, ~ .x %>%
                           rename(
                             gridmet_tmmx_k = gridmet_tmmx_degC,
                             gridmet_tmmn_k = gridmet_tmmn_degC
@@ -376,6 +376,15 @@ ClimateData_Corridor_combined <- ClimateData_Corridor_combined %>% select(-NAME,
 
 ClimateData_County_combined<- ClimateData_County_combined %>% rename(FIPS=ID)
 
+ClimateData_EKSRB_combined <- ClimateData_EKSRB_combined %>%
+  select(-tmmx_K_gridmet, -tmmn_K_gridmet)
+
+ClimateData_County_combined <- ClimateData_County_combined %>%
+  select(-tmmx_K_gridmet, -tmmn_K_gridmet)
+
+ClimateData_Corridor_combined <- ClimateData_Corridor_combined %>%
+  select(-tmmx_K_gridmet, -tmmn_K_gridmet)
+
 write_xlsx(
   ClimateData_EKSRB_combined,
   path = file.path(file_Path_Variable_O, "ClimateData_EKSRB.xlsx")
@@ -398,6 +407,22 @@ write_xlsx(
 
 
 
+########Csv
+
+write_csv(
+  ClimateData_EKSRB_combined,
+  file = file.path(file_Path_Variable_O, "ClimateData_EKSRB.csv")
+)
+
+write_csv(
+  ClimateData_County_combined,
+  file = file.path(file_Path_Variable_O, "ClimateData_County.csv")
+)
+
+write_csv(
+  ClimateData_Corridor_combined,
+  file = file.path(file_Path_Variable_O, "ClimateData_Corridor.csv")
+)
 
 
 
