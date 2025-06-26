@@ -6,6 +6,8 @@
 # Purpose: This script gets monthly historic climate data, averaged over the following
 #   subdomains: Counties, EKSRB, AlluvialCorridor.
 # Subdomain boundaries are created in `DataPrep_Boundaries.R` script and saved in `data` folder.
+# This script requires large input datasets that are too big to store in the 
+#  GitHub repository so are stored locally.
 # 
 # CSV files created are:
 #  County CSV file: ClimateData_County.csv

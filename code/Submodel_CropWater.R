@@ -1,6 +1,6 @@
 ## Submodel_CropWater.R
 # Author: Sam Zipper
-# Date: 6/19/2025
+# Date: 6/26/2025
 #
 # Purpose: This script integrates climate, irrigation, and crop yield data to
 #   develop crop-water productivity functions for the region.
@@ -24,8 +24,7 @@ yrs_common <- 1990:2023
 df_yield <- read_csv(file.path("data", "CropYieldData_County.csv")) |> 
   subset(Year %in% yrs_common)
 
-df_climate <- read_xlsx(file.path("data", "ClimateData_County.xlsx"),
-                        col_types = rep("numeric", 15)) |> 
+df_climate <- read_csv(file.path("data", "ClimateData_County.csv")) |> 
   subset(Year %in% yrs_common) |> 
   group_by(Year, FIPS) |> 
   summarize(precip_mm = sum(precip_mm_gridmet))
@@ -56,7 +55,9 @@ df_combo <-
   # calculate water available
   mutate(totalWater_mm = precip_mm + irrigation_mm) |> 
   # get rid of NA values in total water (happens when irrigated amount is unknown)
-  filter(!is.na(totalWater_mm))
+  filter(!is.na(totalWater_mm)) |> 
+  # get rid of irrigated data points with small sample size
+  filter(!(WaterManagement == "Irrigated" & n_pdiv < 3))
 
 # plot data ---------------------------------------------------------------
 
@@ -100,6 +101,27 @@ fit_soy_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2), data = df_soy)
 fit_sorghum_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2), data = df_sorghum)
 fit_wheat_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2), data = df_wheat)
 
+# summarize output
+df_fit <-
+  data.frame(
+    Crop = c("Corn", "Soybeans", "Sorghum", "Wheat"),
+    fit_R2_kcalHa = c(summary(fit_corn_kcalHa)$adj.r.squared, 
+                      summary(fit_soy_kcalHa)$adj.r.squared, 
+                      summary(fit_sorghum_kcalHa)$adj.r.squared, 
+                      summary(fit_wheat_kcalHa)$adj.r.squared),
+    fit_R2_kgHa = c(summary(fit_corn_kgHa)$adj.r.squared, 
+                    summary(fit_soy_kgHa)$adj.r.squared, 
+                    summary(fit_sorghum_kgHa)$adj.r.squared, 
+                    summary(fit_wheat_kgHa)$adj.r.squared)
+  )
+
+# get predicted lm to investigate residual by county
+df_corn$yield_kcalHa_detrended_fit <- fit_corn_kcalHa$fitted.values
+df_soy$yield_kcalHa_detrended_fit <- fit_soy_kcalHa$fitted.values
+df_sorghum$yield_kcalHa_detrended_fit <- fit_sorghum_kcalHa$fitted.values
+df_wheat$yield_kcalHa_detrended_fit <- fit_wheat_kcalHa$fitted.values
+df_combo <- bind_rows(df_corn, df_soy, df_sorghum, df_wheat)
+
 # plot data points with fitted quadratic equation
 ggplot(df_combo, aes(x = totalWater_mm, y = yield_kcalHa_detrended)) +
   geom_point(aes(color = WaterManagement)) +
@@ -110,3 +132,17 @@ ggplot(df_combo, aes(x = totalWater_mm, y = yield_kcalHa_detrended)) +
                      values = c("Non-Irrigated" = col.cat.org, 
                                 "Irrigated" = col.cat.blu)) + 
   stat_smooth(method = "lm", formula = y ~ poly(x, 2), color = "black")
+
+# plot predicted vs observed
+ggplot(df_combo, aes(x = yield_kcalHa_detrended_fit, y = yield_kcalHa_detrended)) +
+  geom_abline(intercept = 0, slope = 1, color = col.gray) +
+  geom_point(aes(color = WaterManagement)) +
+  facet_wrap(~ Crop, scales = "free") +
+  scale_color_manual(name = "Water Management",
+                     values = c("Non-Irrigated" = col.cat.org, 
+                                "Irrigated" = col.cat.blu)) + 
+  stat_smooth(method = "lm", color = "black") +
+  labs(x = "Predicted Yield [kcal/ha]", 
+       y = "Observed Yield [kcal/ha]") +
+  ggtitle("Corn Yield: Predicted vs Observed") 
+
