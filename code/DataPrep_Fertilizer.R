@@ -25,5 +25,7 @@ df_in <- read_csv(file.path(path_data, "FertilizerDataFromIkenna", "FertilizerDa
 # select columns, rename, save
 df_in |>
   dplyr::select(Crop, WaterManagement, FertilizerUse_kgHa_Final) |> 
+  # minimal irrigated wheat and sorghum - not including in analysis
+  subset(!(Crop %in% c("Wheat", "Sorghum") & WaterManagement == "Irrigated")) |> 
   rename(FertilizerUse_kgHa = FertilizerUse_kgHa_Final) |> 
   write_csv(file.path("data", "FertilizerData_EKSRB.csv"))

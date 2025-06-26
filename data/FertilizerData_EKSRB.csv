@@ -1,9 +1,7 @@
 Crop,WaterManagement,FertilizerUse_kgHa
 Corn,Irrigated,336
 Corn,Non-Irrigated,208
-Sorghum,Irrigated,112
 Sorghum,Non-Irrigated,112
-Wheat,Irrigated,113
 Wheat,Non-Irrigated,89
 Soybeans,Irrigated,67
 Soybeans,Non-Irrigated,45

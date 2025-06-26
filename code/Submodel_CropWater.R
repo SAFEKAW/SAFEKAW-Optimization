@@ -32,6 +32,21 @@ df_climate <- read_csv(file.path("data", "ClimateData_County.csv")) |>
 df_irrigation_in <- read_csv(file.path("data", "WaterUseData_County.csv")) |> 
   subset(Year %in% yrs_common)
 
+# summarize land cover data
+df_landcover <- read_csv(file.path("data", "LandCoverData-CDL_County.csv"))
+
+df_landcover_byCounty <- 
+  df_landcover |> 
+  subset(LandCover %in% c("Corn", "Soybeans", "Sorghum", "Wheat")) |>
+  group_by(FIPS, LandCover) |>
+  summarize(area_ha_mean = mean(area_ha, na.rm = TRUE),
+            area_prc_mean = mean(area_prc, na.rm = TRUE))
+
+ggplot(df_landcover_byCounty, aes(x = factor(FIPS), y = area_ha_mean)) +
+  geom_col() +
+  facet_wrap(~LandCover, scales = "free") +
+  coord_flip()
+
 # inspect irrigation options and decide which variable to use
 # ggplot(subset(df_irrigation_in, n_pdiv >= 3), 
 #        aes(x = irrigation_mm_mean, y = irrigation_mm_median)) +
@@ -46,7 +61,7 @@ df_irrigation <-
 
 # combine data into single data frame -------------------------------------
 
-df_combo <- 
+df_combo_all <- 
   df_yield |> 
   left_join(df_climate, by = c("Year", "FIPS")) |> 
   left_join(df_irrigation, by = c("Year", "FIPS", "Crop")) |> 
@@ -56,30 +71,17 @@ df_combo <-
   mutate(totalWater_mm = precip_mm + irrigation_mm) |> 
   # get rid of NA values in total water (happens when irrigated amount is unknown)
   filter(!is.na(totalWater_mm)) |> 
-  # get rid of irrigated data points with small sample size
-  filter(!(WaterManagement == "Irrigated" & n_pdiv < 3))
+  left_join(df_landcover_byCounty, by = c("FIPS", "Crop"="LandCover"))
 
-# plot data ---------------------------------------------------------------
 
-ggplot(df_combo, aes(x = totalWater_mm, y = yield_kgHa_detrended)) +
-  geom_point(aes(color = WaterManagement)) +
-  facet_wrap(~ Crop, scales = "free") +
-  labs(x = "Precipitation + Irrigation [mm]", 
-       y = "Yield [kg/ha]") + 
-  scale_color_manual(name = "Water Management",
-                     values = c("Non-Irrigated" = col.cat.org, 
-                                "Irrigated" = col.cat.blu)) + 
-  stat_smooth(method = "loess")
+# trim to get rid of small sample size data points
+area_ha_thres <- 64.75*10 # 160 acre quarter-section is 64.75 ha
+pdiv_thres <- 3
+df_combo <- 
+  df_combo_all |> 
+  filter(!(WaterManagement == "Irrigated" & n_pdiv < pdiv_thres)) |> 
+  filter(area_ha_mean > area_ha_thres)
 
-ggplot(df_combo, aes(x = totalWater_mm, y = yield_kcalHa_detrended)) +
-  geom_point(aes(color = WaterManagement)) +
-  facet_wrap(~ Crop, scales = "free") +
-  labs(x = "Precipitation + Irrigation [mm]", 
-       y = "Yield [kcal/ha]") + 
-  scale_color_manual(name = "Water Management",
-                     values = c("Non-Irrigated" = col.cat.org, 
-                                "Irrigated" = col.cat.blu)) + 
-  stat_smooth(method = "loess")
 
 # fit quadratic equation for each crop ------------------------------------
 
@@ -122,6 +124,8 @@ df_sorghum$yield_kcalHa_detrended_fit <- fit_sorghum_kcalHa$fitted.values
 df_wheat$yield_kcalHa_detrended_fit <- fit_wheat_kcalHa$fitted.values
 df_combo <- bind_rows(df_corn, df_soy, df_sorghum, df_wheat)
 
+# plot data ---------------------------------------------------------------
+
 # plot data points with fitted quadratic equation
 ggplot(df_combo, aes(x = totalWater_mm, y = yield_kcalHa_detrended)) +
   geom_point(aes(color = WaterManagement)) +
@@ -132,6 +136,15 @@ ggplot(df_combo, aes(x = totalWater_mm, y = yield_kcalHa_detrended)) +
                      values = c("Non-Irrigated" = col.cat.org, 
                                 "Irrigated" = col.cat.blu)) + 
   stat_smooth(method = "lm", formula = y ~ poly(x, 2), color = "black")
+
+# plot residuals by county
+ggplot(df_combo, aes(x = factor(FIPS), y = (yield_kcalHa_detrended - yield_kcalHa_detrended_fit))) +
+  geom_hline(yintercept = 0, color = col.gray) +
+  geom_boxplot() +
+  facet_wrap(~ Crop, scales = "free_y") +
+  labs(x = "County FIPS", 
+       y = "Residual [kcal/ha]") + 
+  theme(axis.text.x = element_text(angle = 90, hjust = 1))
 
 # plot predicted vs observed
 ggplot(df_combo, aes(x = yield_kcalHa_detrended_fit, y = yield_kcalHa_detrended)) +

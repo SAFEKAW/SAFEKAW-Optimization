@@ -79,6 +79,11 @@ df_yield_out <-
 # rename "Grain Sorghum" to "Sorghum" to match CDL and water use
 df_yield_out$Crop[df_yield_out$Crop == "Grain Sorghum"] <- "Sorghum"
 
+# for wheat and sorghum, there is minimal irrigation in this region; remove irrigated fields
+df_yield_out <- 
+  df_yield_out |> 
+  subset(!(Crop %in% c("Wheat", "Sorghum") & WaterManagement == "Irrigated"))
+
 # visualize and save ------------------------------------------------------
 
 ggplot(df_yield_out, aes(x = yield_kgHa)) +
