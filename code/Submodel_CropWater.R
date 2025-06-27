@@ -135,16 +135,30 @@ ggplot(df_combo, aes(x = totalWater_mm, y = yield_kcalHa_detrended)) +
   scale_color_manual(name = "Water Management",
                      values = c("Non-Irrigated" = col.cat.org, 
                                 "Irrigated" = col.cat.blu)) + 
-  stat_smooth(method = "lm", formula = y ~ poly(x, 2), color = "black")
+  stat_smooth(method = "lm", formula = y ~ poly(x, 2), color = "black") +
+  theme(legend.position = "bottom")
+ggsave(file.path("figures", "Submodel_CropWater_WaterProductivityCurves.png"),
+       width = 120, height = 120, units = "mm")
 
-# plot residuals by county
-ggplot(df_combo, aes(x = factor(FIPS), y = (yield_kcalHa_detrended - yield_kcalHa_detrended_fit))) +
+# plot residuals by county with counties order by mean annual precip
+df_climate_meanPrecip <- 
+  df_climate |> 
+  group_by(FIPS) |> 
+  summarize(precip_mm_mean = mean(precip_mm)) |> 
+  arrange(precip_mm_mean)
+
+df_combo |> 
+  left_join(df_climate_meanPrecip, by = "FIPS") |> 
+  mutate(FIPS_ordered = factor(FIPS, levels = c(df_climate_meanPrecip$FIPS))) |> 
+  ggplot(aes(x = FIPS_ordered, y = (yield_kcalHa_detrended - yield_kcalHa_detrended_fit))) +
   geom_hline(yintercept = 0, color = col.gray) +
   geom_boxplot() +
   facet_wrap(~ Crop, scales = "free_y") +
-  labs(x = "County FIPS", 
-       y = "Residual [kcal/ha]") + 
-  theme(axis.text.x = element_text(angle = 90, hjust = 1))
+  labs(x = "County FIPS (driest --> wettest)", 
+       y = "Residual (actual - predicted) [kcal/ha]") + 
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5))
+ggsave(file.path("figures", "Submodel_CropWater_ResidualByCounty.png"),
+       width = 190, height = 120, units = "mm")
 
 # plot predicted vs observed
 ggplot(df_combo, aes(x = yield_kcalHa_detrended_fit, y = yield_kcalHa_detrended)) +
