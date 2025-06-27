@@ -21,8 +21,10 @@
 #  - Land cover: 
 #     - Shreya uses interpolated NLCD, I use CDL. This means my model has annual data but shorter time period.
 #     - I combined grass/herb/pasture/hay into single predictor
-#  - Climate:
-#     - I use gridmet from 1979-present, not sure Shreya data source
+#  - Climate (SPEI6, precip, temperature, whiplash):
+#     - I use gridmet from 1979-present, Shreya used PRISM 1979-2022.
+#  - Irrigation:
+#     - I use surface water + groundwater, Shreya just uses groundwater.
 #  - Fertilizer:
 #     - I estimate based on EKSRB total land cover and typical fertilizer rates, Shreya gets from county dataset and weights by county
 
