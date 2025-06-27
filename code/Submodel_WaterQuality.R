@@ -171,8 +171,15 @@ df_combined |>
   )) |> 
   ggplot(aes(x = Year, y = NitrateFlux_kg, color = Source)) +
   geom_point() +
-  geom_line()
-
+  geom_line() +
+  scale_color_manual(name = NULL, values = c("black", col.cat.red, col.cat.grn)) +
+  labs(y = "Nitrate Flux [kg/yr]") +
+  theme(legend.position = "inside", 
+        legend.position.inside = c(0.05, 0.95),
+        legend.justification = c(0, 1)) +
+  guides(color = guide_legend(nrow = 3))
+ggsave(file.path("figures", "Submodel_WaterQuality_ComparisonWithShreya.png"),
+       width = 120, height = 95, units = "mm")
 mae(df_combined$NitrateFluxPredicted_kg, df_combined$NitrateFlux_kg, na.rm = TRUE)
 mae(df_combined$NitrateFluxShreyaPredicted_kg, df_combined$NitrateFlux_kg, na.rm = TRUE)
 
