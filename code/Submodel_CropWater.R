@@ -171,5 +171,5 @@ ggplot(df_combo, aes(x = yield_kcalHa_detrended_fit, y = yield_kcalHa_detrended)
   stat_smooth(method = "lm", color = "black") +
   labs(x = "Predicted Yield [kcal/ha]", 
        y = "Observed Yield [kcal/ha]") +
-  ggtitle("Corn Yield: Predicted vs Observed") 
+  ggtitle("Predicted vs Observed") 
 
