@@ -144,6 +144,39 @@ df_wimas_watershed_out <-
 
 write_csv(df_wimas_watershed_out, file.path("data", "WaterUseData_EKSRB.csv"))
 
+# within irrigation water use: calculate annual total by crop type
+#  crop codes are here: https://geohydro.kgs.ku.edu/geohydro/ofr/2005_30/wimas_ofr2005_30_manual.htm
+df_wimas_watershed_byCrop <-
+  sf_wimas_watershed |> 
+  st_drop_geometry() |> 
+  filter(is.finite(amt) & amt > 0) |> 
+  mutate(crop_code = as.numeric(crop_code)) |> 
+  mutate(Crop = case_when(
+    crop_code == 0 | is.na(crop_code) ~ "Unknown",
+    crop_code == 1 ~ "Alfalfa",
+    crop_code == 2 ~ "Corn",
+    crop_code == 3 ~ "Sorghum",
+    crop_code == 4 ~ "Soybeans",
+    crop_code == 5 ~ "Wheat",
+    crop_code %in% c(seq(6, 10), 12, 13, 14, 15, 77, 78) ~ "Other Crop",
+    crop_code %in% seq(16, 74) ~ "Multi-Crop",
+    crop_code %in% c(11, 76) ~ "Golf Course/Turf/Sod",
+    crop_code == 75 ~ "Pasture"
+  )) |> 
+  group_by(year, Crop) |> 
+  summarize(waterUse_m3 = sum(amt * 1233.4818375475, na.rm = TRUE),
+            n_waterUse_NA = sum(is.na(amt)),
+            irrArea_ha = sum(acres_irr * ha_per_ac, na.rm = TRUE),
+            n_irrArea_NA = sum(is.na(acres_irr))) |> 
+  rename(Year = year)
+
+ggplot(df_wimas_watershed_byCrop, aes(x = Year, y = waterUse_m3)) +
+  geom_col() + facet_wrap(~Crop)
+ggplot(df_wimas_watershed_byCrop, aes(x = Year, y = irrArea_ha)) +
+  geom_col() + facet_wrap(~Crop)
+
+write_csv(df_wimas_watershed_byCrop, file.path("data", "WaterUseByCrop_EKSRB.csv"))
+
 # Process for corridor ---------------------------------------------------
 
 # subset sf_wimas to any wells within the corridor
@@ -207,6 +240,40 @@ df_wimas_corridor_out <-
                   "Sector" = "use")))
 
 write_csv(df_wimas_corridor_out, file.path("data", "WaterUseData_AlluvialCorridor.csv"))
+
+
+# within irrigation water use: calculate annual total by crop type
+#  crop codes are here: https://geohydro.kgs.ku.edu/geohydro/ofr/2005_30/wimas_ofr2005_30_manual.htm
+df_wimas_corridor_byCrop <-
+  sf_wimas_corridor |> 
+  st_drop_geometry() |> 
+  filter(is.finite(amt) & amt > 0) |> 
+  mutate(crop_code = as.numeric(crop_code)) |> 
+  mutate(Crop = case_when(
+    crop_code == 0 | is.na(crop_code) ~ "Unknown",
+    crop_code == 1 ~ "Alfalfa",
+    crop_code == 2 ~ "Corn",
+    crop_code == 3 ~ "Sorghum",
+    crop_code == 4 ~ "Soybeans",
+    crop_code == 5 ~ "Wheat",
+    crop_code %in% c(seq(6, 10), 12, 13, 14, 15, 77, 78) ~ "Other Crop",
+    crop_code %in% seq(16, 74) ~ "Multi-Crop",
+    crop_code %in% c(11, 76) ~ "Golf Course/Turf/Sod",
+    crop_code == 75 ~ "Pasture"
+  )) |> 
+  group_by(year, Crop) |> 
+  summarize(waterUse_m3 = sum(amt * 1233.4818375475, na.rm = TRUE),
+            n_waterUse_NA = sum(is.na(amt)),
+            irrArea_ha = sum(acres_irr * ha_per_ac, na.rm = TRUE),
+            n_irrArea_NA = sum(is.na(acres_irr))) |> 
+  rename(Year = year)
+
+ggplot(df_wimas_corridor_byCrop, aes(x = Year, y = waterUse_m3)) +
+  geom_col() + facet_wrap(~Crop)
+ggplot(df_wimas_corridor_byCrop, aes(x = Year, y = irrArea_ha)) +
+  geom_col() + facet_wrap(~Crop)
+
+write_csv(df_wimas_corridor_byCrop, file.path("data", "WaterUseByCrop_AlluvialCorridor.csv"))
 
 
 # Process for counties ----------------------------------------------------
@@ -284,8 +351,8 @@ df_wimas_counties_out <-
   rename(Year = year)
 
 # plot to inspect
-ggplot(df_wimas_counties_points, aes(x = Crop, y = irrigation_mm)) +
-  geom_boxplot()
+ggplot(df_wimas_counties_points, aes(x = year, y = irrigation_mm, group = year)) +
+  geom_boxplot() + facet_wrap(~Crop)
 
 # save output
 write_csv(df_wimas_counties_out, file.path("data", "WaterUseData_County.csv"))
