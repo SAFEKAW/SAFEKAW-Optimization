@@ -1,0 +1,222 @@
+---
+title: "Common input file"
+author: "BRW"
+date: "2025-08-15"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Common inputs for SAFEKAW submodels
+- Goal of this file is to get input variables for submodels (components) all into consistent spatial scale (basin) and units
+
+- focus models so far are 1) Crop model and 2) SW quality model
+- These both require (for now) inputs from:
+    - Climate (precip.; mm)
+        - crop is total ppt each year (summed)
+        - SW model is basin average per year
+        
+    - Land use (ha)
+        - SW quality has all land use, with cultivated lumped
+        - crop only has corn, soybean, wheat and sorghum
+        
+    - Irrigation (mm for crop; m3 for SW quality)
+    
+```{r}
+#workspace
+source(file.path("code", "paths+packages.R"))
+```
+    
+  
+## Climate
+ - Two submodels have different climate data sources
+ - Crop model is annual and for each county
+ - Water quality is monthly averages over entire basin 
+ - In this first code block, inputs from county level are aggregated (sum and mean) for each county and across the basin and compared to the EKSRB input data file. They are now in agreement, so county level is the common input (df_climate_all)
+
+```{r}
+yrs_common <- 1990:2023
+
+# County-level climate data
+df_climate_county <- read_csv(file.path("data", "ClimateData_County.csv")) %>%
+  filter(Year %in% yrs_common) %>%
+  mutate(
+    FIPS = as.character(FIPS),
+    spatial_scale = "county", 
+    source = "Crop input" 
+  ) %>%
+  group_by(Year, FIPS, spatial_scale, source) %>%
+  summarize(
+    precip_mm = sum(precip_mm_gridmet),
+    precip_mm_avg = mean(precip_mm_gridmet),
+
+    .groups = "drop"
+  )
+
+# Basin-level climate data
+df_climate_basin <- read_csv(file.path("data", "ClimateData_County.csv")) %>%
+  filter(Year %in% yrs_common) %>%
+  group_by(Year) %>%
+  summarize(
+    precip_mm = sum(precip_mm_gridmet),
+    precip_mm_avg = mean(precip_mm_gridmet), #this is what need to be used for SW model
+    .groups = "drop"
+  ) %>%
+  mutate(
+    FIPS = "BASIN",
+    spatial_scale = "basin",
+    source = "Crop input" 
+  ) %>% dplyr::select(Year, FIPS, spatial_scale, source, precip_mm, precip_mm_avg)
+
+# Combine both county level dataframes
+df_climate_all <- bind_rows(df_climate_county, df_climate_basin)
+
+
+
+#comparing to SW quality model input and joining
+df_climate_basin_SWqual <- read_csv(file.path("data", "ClimateData_EKSRB.csv")) #this is averaged over EKSRB!!!!???
+
+df_climate_basin_SWqual_trim <-  df_climate_basin_SWqual %>% dplyr::select(Year, precip_mm_gridmet) %>% filter(!is.na(precip_mm_gridmet), Year > 1989) %>%  group_by(Year) %>%
+  summarize(
+    precip_mm = sum(precip_mm_gridmet),
+    precip_mm_avg = mean(precip_mm_gridmet), #this is what need to be used for SW model
+    .groups = "drop"
+  )  %>% mutate(FIPS = "BASIN", spatial_scale = "basin", source = "SW qual input" ) %>% 
+  dplyr::select(Year, FIPS, spatial_scale, source, precip_mm, precip_mm_avg)
+
+
+df_climate_all2 <- bind_rows(df_climate_all, df_climate_basin_SWqual_trim)
+
+df_climate_all2 %>% filter(spatial_scale == "basin") %>%
+  ggplot() + 
+  geom_point(aes(x = Year, y = precip_mm_avg, color = source, alpha = source)) +
+  scale_alpha_manual(values = c(0.8, 0.3)) + 
+  labs(
+    title = "Annual Precipitation: Basin sw quality v basin avgs (from county data)",
+    x = "Year",
+    y = "Precipitation (mm)",
+    color = "Spatial Scale"
+  ) +
+  theme_classic()
+
+
+#climate data is now from one file, but only on annual 
+
+```
+ - need to check that the counties are clipped to watershed boundary!!! (don't think that it is)
+
+## Land use
+  - Similar to above
+```{r}
+#crop
+df_landcover <- read_csv(file.path("data", "LandCoverData-CDL_County.csv"))
+
+df_landcover_county <- 
+ df_landcover |> 
+  #subset(LandCover %in% c("Corn", "Soybeans", "Sorghum", "Wheat")) |>
+  group_by(FIPS, , Year, LandCover) |>
+  summarize(area_ha_mean = mean(area_ha, na.rm = TRUE),
+            area_prc_mean = mean(area_prc, na.rm = TRUE))  |>
+  mutate(
+    FIPS = as.character(FIPS),
+    spatial_scale = "county",
+    source = "Crop input"  ) |> 
+  dplyr::select(Year, FIPS, spatial_scale, source, LandCover,area_ha_mean, area_prc_mean)
+
+
+df_landcover_basin <- 
+ df_landcover |> 
+  group_by(LandCover, Year) |>
+  summarize(area_ha_mean = mean(area_ha, na.rm = TRUE),
+            area_prc_mean = mean(area_prc, na.rm = TRUE)) |>
+   mutate(
+    FIPS = "BASIN",
+    spatial_scale = "basin",
+    source = "Crop input" ) |> 
+  dplyr::select(Year, FIPS, spatial_scale, source, LandCover, area_ha_mean, area_prc_mean)
+
+df_landcover_all <- bind_rows(df_landcover_county, df_landcover_basin)
+
+
+
+
+#sw quality
+df_landcover_EKSRB <- read_csv(file.path("data", "LandCoverData-CDL_EKSRB.csv")) |> 
+  mutate(source = "SW quality", FIPS = "BASIN", spatial_scale = "basin", area_prc_mean = area_prc) |> 
+  dplyr::select(Year, FIPS, spatial_scale, source, LandCover, area_prc_mean)
+
+df_landcover_all2 <- df_landcover_all |> dplyr::select(-area_ha_mean) |> bind_rows( df_landcover_EKSRB)
+
+
+df_landcover_all2 |> filter(spatial_scale == "basin", LandCover %in% c("Corn", "Wheat", "Soybeans", "Developed", "Grass/Pasture/Shrubland", "Forest")) |>
+ggplot() + 
+  geom_point(aes(Year, area_prc_mean, color = source)) + 
+  facet_wrap(~LandCover) + 
+  theme_classic()
+
+
+```
+   - likely need to add in the NLCD early years (1990~2005) from Shreya's model and do a linear regression to gap fill!
+   - Crop model needs to subset within model/function
+   
+   
+## Irrigated water use
+  - three potential data sources: WaterUseData_County.csv (crop model), WaterUseData_EKSRB.csv (sw qualtiy model), 
+  intermediate between the two (WaterUseByCrop_EKSRB.csv)
+  - the county data, already in mm (what area was this divided by??), when summed is 0.5 to 8 mm, when avg is closer to right mag
+  - the basin data is very very small, but likley bc normalized to the wrong area (entire watershed right now - needs to be cropped area)
+  - Crop by area across EKSRB is same mag as county data when averaged
+```{r}
+#crop
+df_irrigation_in <- read_csv(file.path("data", "WaterUseData_County.csv")) |> 
+  subset(Year %in% yrs_common) |> 
+  mutate(irrigation_m_mean = irrigation_mm_mean/1000 , spatial_scale = "county") |> #normalied to crop area only, not entire county
+  dplyr::select(Year, Crop, FIPS, spatial_scale, irrigation_m_mean)
+
+df_irrigation_CropSum <- df_irrigation_in |> group_by(Year) |>
+  summarise(irrigation_WaterUse_m = mean(irrigation_m_mean)) |> #should this be summed or averaged>????
+  mutate(spatial_scale = "county")
+
+#sw quality
+df_irrigation_EKSRB <- read_csv(file.path("data", "WaterUseData_EKSRB.csv")) |> #compare with this one as well - WaterUseByCrop_EKSRB.csv
+  #WaterUseData_EKSRB.csv is what SW quality uses, but just filters out irr only
+   filter(Sector == "IRR") |>
+  #need to normalize ^^ by watershed area as m2
+  mutate(irrigation_WaterUse_m = waterUse_m3 / (14633204866) , spatial_scale = "basin", FIPS = "BASIN") |> #value of watershed area in ha to m from ArcGIS/shapefile, dist over entire watershed, not just crop area.. 
+  dplyr::select(Year, FIPS, spatial_scale, irrigation_WaterUse_m)
+
+
+ggplot() + 
+  geom_point(aes(df_irrigation_CropSum$Year, df_irrigation_CropSum$irrigation_WaterUse_m), color = "darkblue", alpha = 0.6) + 
+  
+  geom_point(aes(df_irrigation_EKSRB$Year, df_irrigation_EKSRB$irrigation_WaterUse_m), color = "red", alpha = 0.7) + 
+  #what is this constant????
+  theme_classic()
+#VERY BIG DISCREPANCY HERE ~3 orders mag
+
+
+#by crop for EKSRB.. does this match sw quality input?
+df_irrigation_EKSRBcrop <- read_csv(file.path("data", "WaterUseByCrop_EKSRB.csv")) |> 
+  filter(Crop %in% c("Corn", "Sorghum","Soybeans", "Wheat")) |> group_by(Year) |>
+  mutate(irrigation_m_mean = waterUse_m3 / (irrArea_ha*10000) ) |> #when using watershed area the mags match - 14633204866
+  summarise(irrigation_WaterUse_m = mean(irrigation_m_mean)) |>  #should this be summed or averaged>????
+  mutate(spatial_scale = "basin")
+
+ggplot() + 
+  
+  geom_point(aes(df_irrigation_EKSRB$Year, df_irrigation_EKSRB$irrigation_WaterUse_m), color = "red", alpha = 0.7) + 
+  
+  geom_point(aes(df_irrigation_EKSRBcrop$Year, df_irrigation_EKSRBcrop$irrigation_WaterUse_m), color = "lightblue", alpha = 0.9) + 
+  
+  geom_point(aes(df_irrigation_CropSum$Year, df_irrigation_CropSum$irrigation_WaterUse_m), color = "darkblue", alpha = 0.6) + 
+
+  theme_classic()
+
+#irr by crop across EKSRB matches total irr across EKSRB, but irr by crop at the county scale is not right...
+
+```
+

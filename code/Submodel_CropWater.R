@@ -27,7 +27,8 @@ df_yield <- read_csv(file.path("data", "CropYieldData_County.csv")) |>
 df_climate <- read_csv(file.path("data", "ClimateData_County.csv")) |> 
   subset(Year %in% yrs_common) |> 
   group_by(Year, FIPS) |> 
-  summarize(precip_mm = sum(precip_mm_gridmet))
+  summarize(precip_mm = sum(precip_mm_gridmet),
+            tmax_C = mean(tmmx_C_gridmet))
 
 df_irrigation_in <- read_csv(file.path("data", "WaterUseData_County.csv")) |> 
   subset(Year %in% yrs_common)
@@ -41,6 +42,7 @@ df_landcover_byCounty <-
   group_by(FIPS, LandCover) |>
   summarize(area_ha_mean = mean(area_ha, na.rm = TRUE),
             area_prc_mean = mean(area_prc, na.rm = TRUE))
+
 
 ggplot(df_landcover_byCounty, aes(x = factor(FIPS), y = area_ha_mean)) +
   geom_col() +
@@ -93,15 +95,15 @@ df_soy <- subset(df_combo, Crop == "Soybeans")
 df_sorghum <- subset(df_combo, Crop == "Sorghum")
 df_wheat <- subset(df_combo, Crop == "Wheat")
 
-fit_corn_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2), data = df_corn)
-fit_soy_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2), data = df_soy)
-fit_sorghum_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2), data = df_sorghum)
-fit_wheat_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2), data = df_wheat)
+fit_corn_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C , data = df_corn)
+fit_soy_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_soy)
+fit_sorghum_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_sorghum)
+fit_wheat_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_wheat)
 
-fit_corn_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2), data = df_corn)
-fit_soy_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2), data = df_soy)
-fit_sorghum_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2), data = df_sorghum)
-fit_wheat_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2), data = df_wheat)
+fit_corn_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_corn)
+fit_soy_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_soy)
+fit_sorghum_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_sorghum)
+fit_wheat_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_wheat)
 
 # summarize output
 df_fit <-
@@ -160,6 +162,17 @@ df_combo |>
 ggsave(file.path("figures", "Submodel_CropWater_ResidualByCounty.png"),
        width = 190, height = 120, units = "mm")
 
+
+
+# Join R² values (kcal/ha) to plotting data
+r2_df <- df_fit %>%
+  select(Crop, fit_R2_kcalHa) %>%
+  mutate(
+    label = paste0("R² = ", round(fit_R2_kcalHa, 2))
+  )
+
+
+
 # plot predicted vs observed
 ggplot(df_combo, aes(x = yield_kcalHa_detrended_fit, y = yield_kcalHa_detrended)) +
   geom_abline(intercept = 0, slope = 1, color = col.gray) +
@@ -170,6 +183,14 @@ ggplot(df_combo, aes(x = yield_kcalHa_detrended_fit, y = yield_kcalHa_detrended)
                                 "Irrigated" = col.cat.blu)) + 
   stat_smooth(method = "lm", color = "black") +
   labs(x = "Predicted Yield [kcal/ha]", 
-       y = "Observed Yield [kcal/ha]") +
+       y = "Observed Yield [kcal/ha]")  +
+  geom_text(data = r2_df, aes(x = 3000, y = 22500, label = label),
+            inherit.aes = FALSE, hjust = 0) +
+  ylim(0, 25000) +
+  xlim(0, 25000) +
   ggtitle("Predicted vs Observed") 
+
+#large scatter across all (low R^2's)
+#corn & sorghum estimates are in right range, but shifted below 1-1 line, 
+#seems to pretty significantly underestimate soybean & wheat
 

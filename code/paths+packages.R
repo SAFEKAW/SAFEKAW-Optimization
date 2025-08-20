@@ -10,6 +10,8 @@ library(lubridate)
 library(readxl)
 library(cdlTools)
 library(hydroGOF)
+library(broom)  # for model fit tidying
+
 
 # path to SAFEKAW google drive data folder
 path_data <- file.path("G:/My Drive/Projects-Active/SAFEKAW/Data")
@@ -58,3 +60,4 @@ col.cat.org <- "#f58231"   # orange
 col.cat.red <- "#e6194b"   # red
 col.cat.blu <- "#0082c8"   # blue
 col.gray <- "gray65"       # gray for annotation lines, etc
+
