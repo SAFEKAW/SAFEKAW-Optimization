@@ -19,7 +19,8 @@ source(file.path("code", "paths+packages.R"))
 # load necessary input data ------------------------------------
 
 # load raw data and trim to common period of data (1990-2023)
-yrs_common <- 1990:2023
+#yrs_common <- 1990:2023
+yrs_common <- 2006:2023
 
 df_yield <- read_csv(file.path("data", "CropYieldData_County.csv")) |> 
   subset(Year %in% yrs_common)
@@ -33,13 +34,15 @@ df_climate <- read_csv(file.path("data", "ClimateData_County.csv")) |>
 df_irrigation_in <- read_csv(file.path("data", "WaterUseData_County.csv")) |> 
   subset(Year %in% yrs_common)
 
+
+
 # summarize land cover data
 df_landcover <- read_csv(file.path("data", "LandCoverData-CDL_County.csv"))
 
 df_landcover_byCounty <- 
   df_landcover |> 
   subset(LandCover %in% c("Corn", "Soybeans", "Sorghum", "Wheat")) |>
-  group_by(FIPS, LandCover) |>
+  group_by(FIPS, LandCover, Year) |>
   summarize(area_ha_mean = mean(area_ha, na.rm = TRUE),
             area_prc_mean = mean(area_prc, na.rm = TRUE))
 
@@ -61,6 +64,8 @@ df_irrigation <-
   rename(irrigation_mm = !!sym(irrigation_var)) |> 
   dplyr::select(Year, FIPS, Crop, irrigation_mm, n_pdiv)
 
+
+
 # combine data into single data frame -------------------------------------
 
 df_combo_all <- 
@@ -73,7 +78,17 @@ df_combo_all <-
   mutate(totalWater_mm = precip_mm + irrigation_mm) |> 
   # get rid of NA values in total water (happens when irrigated amount is unknown)
   filter(!is.na(totalWater_mm)) |> 
-  left_join(df_landcover_byCounty, by = c("FIPS", "Crop"="LandCover"))
+  left_join(df_landcover_byCounty, by = c("FIPS", "Crop"="LandCover", "Year")) |>
+  #adding in fertilizer here
+  mutate(fertilizer_kgHa = 
+           case_when(
+             Crop == "Corn" ~ 250, # rough average of irr and rainfed
+             Crop == "Sorghum" ~ 112,
+             Crop == "Soybeans" ~ 56, # rough average of irr and rainfed
+             Crop == "Wheat" ~ 89,
+             TRUE ~ NA_real_),
+         fertilizer_kgCrop = fertilizer_kgHa * area_ha_mean)
+ 
 
 
 # trim to get rid of small sample size data points
@@ -84,7 +99,7 @@ df_combo <-
   filter(!(WaterManagement == "Irrigated" & n_pdiv < pdiv_thres)) |> 
   filter(area_ha_mean > area_ha_thres)
 
-
+write.csv(df_combo, "df_combo.csv")
 # fit quadratic equation for each crop ------------------------------------
 
 # fit quadratic equation to detrended yield in kcal/ha
@@ -95,15 +110,15 @@ df_soy <- subset(df_combo, Crop == "Soybeans")
 df_sorghum <- subset(df_combo, Crop == "Sorghum")
 df_wheat <- subset(df_combo, Crop == "Wheat")
 
-fit_corn_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C , data = df_corn)
-fit_soy_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_soy)
-fit_sorghum_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_sorghum)
-fit_wheat_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_wheat)
+fit_corn_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C + fertilizer_kgCrop , data = df_corn) 
+fit_soy_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C + fertilizer_kgCrop, data = df_soy)
+fit_sorghum_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C , data = df_sorghum)
+fit_wheat_kcalHa <- lm(yield_kcalHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C + fertilizer_kgCrop, data = df_wheat)
 
-fit_corn_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_corn)
-fit_soy_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_soy)
-fit_sorghum_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_sorghum)
-fit_wheat_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C, data = df_wheat)
+fit_corn_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C + fertilizer_kgCrop, data = df_corn)
+fit_soy_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C + fertilizer_kgCrop, data = df_soy)
+fit_sorghum_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C , data = df_sorghum)
+fit_wheat_kgHa <- lm(yield_kgHa_detrended ~ poly(totalWater_mm, 2)+ tmax_C + fertilizer_kgCrop, data = df_wheat)
 
 # summarize output
 df_fit <-
@@ -165,8 +180,8 @@ ggsave(file.path("figures", "Submodel_CropWater_ResidualByCounty.png"),
 
 
 # Join R² values (kcal/ha) to plotting data
-r2_df <- df_fit %>%
-  select(Crop, fit_R2_kcalHa) %>%
+r2_df <- df_fit|>
+  select(Crop, fit_R2_kcalHa) |>
   mutate(
     label = paste0("R² = ", round(fit_R2_kcalHa, 2))
   )
@@ -186,8 +201,8 @@ ggplot(df_combo, aes(x = yield_kcalHa_detrended_fit, y = yield_kcalHa_detrended)
        y = "Observed Yield [kcal/ha]")  +
   geom_text(data = r2_df, aes(x = 3000, y = 22500, label = label),
             inherit.aes = FALSE, hjust = 0) +
-  ylim(0, 25000) +
-  xlim(0, 25000) +
+ # ylim(0, 25000) +
+  #xlim(0, 25000) +
   ggtitle("Predicted vs Observed") 
 
 #large scatter across all (low R^2's)

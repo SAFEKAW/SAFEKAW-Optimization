@@ -42,72 +42,26 @@ source(file.path("code", "paths+packages.R"))
 yrs_common <- 1990:2023
 
 # County-level climate data
-df_climate_county <- read_csv(file.path("data", "ClimateData_County.csv")) %>%
-  filter(Year %in% yrs_common) %>%
+df_climate_county <- read_csv(file.path("data", "ClimateData_County.csv")) |>
+  filter(Year %in% yrs_common)|>
   mutate(
     FIPS = as.character(FIPS),
     spatial_scale = "county", 
-    source = "Crop input" 
-  ) %>%
-  group_by(Year, FIPS, spatial_scale, source) %>%
+    source = "Crop input" ,
+  ) |>
+  group_by(Year, FIPS, spatial_scale) |>
   summarize(
     precip_mm = sum(precip_mm_gridmet),
     precip_mm_avg = mean(precip_mm_gridmet),
-
+    tmin_C_avg = mean(tmmn_C_gridmet),
+    tmax_C_avg = mean(tmmx_C_gridmet),
     .groups = "drop"
   )
 
-# Basin-level climate data
-df_climate_basin <- read_csv(file.path("data", "ClimateData_County.csv")) %>%
-  filter(Year %in% yrs_common) %>%
-  group_by(Year) %>%
-  summarize(
-    precip_mm = sum(precip_mm_gridmet),
-    precip_mm_avg = mean(precip_mm_gridmet), #this is what need to be used for SW model
-    .groups = "drop"
-  ) %>%
-  mutate(
-    FIPS = "BASIN",
-    spatial_scale = "basin",
-    source = "Crop input" 
-  ) %>% dplyr::select(Year, FIPS, spatial_scale, source, precip_mm, precip_mm_avg)
 
-# Combine both county level dataframes
-df_climate_all <- bind_rows(df_climate_county, df_climate_basin)
-
-
-
-#comparing to SW quality model input and joining
-df_climate_basin_SWqual <- read_csv(file.path("data", "ClimateData_EKSRB.csv")) #this is averaged over EKSRB!!!!???
-
-df_climate_basin_SWqual_trim <-  df_climate_basin_SWqual %>% dplyr::select(Year, precip_mm_gridmet) %>% filter(!is.na(precip_mm_gridmet), Year > 1989) %>%  group_by(Year) %>%
-  summarize(
-    precip_mm = sum(precip_mm_gridmet),
-    precip_mm_avg = mean(precip_mm_gridmet), #this is what need to be used for SW model
-    .groups = "drop"
-  )  %>% mutate(FIPS = "BASIN", spatial_scale = "basin", source = "SW qual input" ) %>% 
-  dplyr::select(Year, FIPS, spatial_scale, source, precip_mm, precip_mm_avg)
-
-
-df_climate_all2 <- bind_rows(df_climate_all, df_climate_basin_SWqual_trim)
-
-df_climate_all2 %>% filter(spatial_scale == "basin") %>%
-  ggplot() + 
-  geom_point(aes(x = Year, y = precip_mm_avg, color = source, alpha = source)) +
-  scale_alpha_manual(values = c(0.8, 0.3)) + 
-  labs(
-    title = "Annual Precipitation: Basin sw quality v basin avgs (from county data)",
-    x = "Year",
-    y = "Precipitation (mm)",
-    color = "Spatial Scale"
-  ) +
-  theme_classic()
-
-
-#climate data is now from one file, but only on annual 
 
 ```
- - need to check that the counties are clipped to watershed boundary!!! (don't think that it is)
+ - need to check that the counties are clipped to watershed boundary!!! 
 
 ## Land use
   - Similar to above
@@ -117,106 +71,368 @@ df_landcover <- read_csv(file.path("data", "LandCoverData-CDL_County.csv"))
 
 df_landcover_county <- 
  df_landcover |> 
-  #subset(LandCover %in% c("Corn", "Soybeans", "Sorghum", "Wheat")) |>
   group_by(FIPS, , Year, LandCover) |>
   summarize(area_ha_mean = mean(area_ha, na.rm = TRUE),
             area_prc_mean = mean(area_prc, na.rm = TRUE))  |>
   mutate(
     FIPS = as.character(FIPS),
     spatial_scale = "county",
-    source = "Crop input"  ) |> 
-  dplyr::select(Year, FIPS, spatial_scale, source, LandCover,area_ha_mean, area_prc_mean)
-
-
-df_landcover_basin <- 
- df_landcover |> 
-  group_by(LandCover, Year) |>
-  summarize(area_ha_mean = mean(area_ha, na.rm = TRUE),
-            area_prc_mean = mean(area_prc, na.rm = TRUE)) |>
-   mutate(
-    FIPS = "BASIN",
-    spatial_scale = "basin",
     source = "Crop input" ) |> 
-  dplyr::select(Year, FIPS, spatial_scale, source, LandCover, area_ha_mean, area_prc_mean)
-
-df_landcover_all <- bind_rows(df_landcover_county, df_landcover_basin)
+  dplyr::select(Year, FIPS, spatial_scale, LandCover, area_ha_mean, area_prc_mean)
 
 
 
+landCoverGroups <- data.frame(
+  LandCover = c("Developed",
+                "Grass/Pasture/Shrubland",
+                "Corn", "Double Crop", "Other Crops", "Sorghum", "Soybeans", "Wheat"),
+  LandCoverGroup = c("developed", "grassPastureHay", rep("all cult", 6)))
 
-#sw quality
-df_landcover_EKSRB <- read_csv(file.path("data", "LandCoverData-CDL_EKSRB.csv")) |> 
-  mutate(source = "SW quality", FIPS = "BASIN", spatial_scale = "basin", area_prc_mean = area_prc) |> 
-  dplyr::select(Year, FIPS, spatial_scale, source, LandCover, area_prc_mean)
+df_landcover_all_class <- 
+  df_landcover_county|> 
+  left_join(landCoverGroups, by = "LandCover") |> na.omit() |>
+  mutate(Crop = 
+           case_when(
+             LandCover == "Corn" ~ "Corn", 
+             LandCover == "Sorghum" ~ "Sorghum",
+             LandCover == "Soybeans" ~ "Soybeans", # rough average of irr and rainfed
+             LandCover == "Wheat" ~ "Wheat",
+             TRUE ~ NA) )
 
-df_landcover_all2 <- df_landcover_all |> dplyr::select(-area_ha_mean) |> bind_rows( df_landcover_EKSRB)
-
-
-df_landcover_all2 |> filter(spatial_scale == "basin", LandCover %in% c("Corn", "Wheat", "Soybeans", "Developed", "Grass/Pasture/Shrubland", "Forest")) |>
-ggplot() + 
-  geom_point(aes(Year, area_prc_mean, color = source)) + 
-  facet_wrap(~LandCover) + 
-  theme_classic()
 
 
 ```
    - likely need to add in the NLCD early years (1990~2005) from Shreya's model and do a linear regression to gap fill!
-   - Crop model needs to subset within model/function
+   - Crop model needs to subset within model wrapper
    
    
 ## Irrigated water use
   - three potential data sources: WaterUseData_County.csv (crop model), WaterUseData_EKSRB.csv (sw qualtiy model), 
   intermediate between the two (WaterUseByCrop_EKSRB.csv)
   - the county data, already in mm (what area was this divided by??), when summed is 0.5 to 8 mm, when avg is closer to right mag
-  - the basin data is very very small, but likley bc normalized to the wrong area (entire watershed right now - needs to be cropped area)
+  - the basin data is very very small, but likely bc normalized to the wrong area (entire watershed right now - needs to be cropped area? Or unit is off with watershed area - needs to be divided by 1*10^8??)
   - Crop by area across EKSRB is same mag as county data when averaged
 ```{r}
 #crop
 df_irrigation_in <- read_csv(file.path("data", "WaterUseData_County.csv")) |> 
   subset(Year %in% yrs_common) |> 
-  mutate(irrigation_m_mean = irrigation_mm_mean/1000 , spatial_scale = "county") |> #normalied to crop area only, not entire county
-  dplyr::select(Year, Crop, FIPS, spatial_scale, irrigation_m_mean)
+  mutate(irrigation_WaterUse_mm = irrigation_mm_mean , 
+         FIPS = as.character(FIPS),
+         spatial_scale = "county",
+         source = "Crop input",
+         LandCoverGroup = "all cult") |> #normalied to crop area only, not entire county
+  dplyr::select(Year, FIPS, spatial_scale, Crop, LandCoverGroup, irrigation_WaterUse_mm, n_pdiv)
 
 df_irrigation_CropSum <- df_irrigation_in |> group_by(Year) |>
-  summarise(irrigation_WaterUse_m = mean(irrigation_m_mean)) |> #should this be summed or averaged>????
-  mutate(spatial_scale = "county")
-
-#sw quality
-df_irrigation_EKSRB <- read_csv(file.path("data", "WaterUseData_EKSRB.csv")) |> #compare with this one as well - WaterUseByCrop_EKSRB.csv
-  #WaterUseData_EKSRB.csv is what SW quality uses, but just filters out irr only
-   filter(Sector == "IRR") |>
-  #need to normalize ^^ by watershed area as m2
-  mutate(irrigation_WaterUse_m = waterUse_m3 / (14633204866) , spatial_scale = "basin", FIPS = "BASIN") |> #value of watershed area in ha to m from ArcGIS/shapefile, dist over entire watershed, not just crop area.. 
-  dplyr::select(Year, FIPS, spatial_scale, irrigation_WaterUse_m)
-
-
-ggplot() + 
-  geom_point(aes(df_irrigation_CropSum$Year, df_irrigation_CropSum$irrigation_WaterUse_m), color = "darkblue", alpha = 0.6) + 
-  
-  geom_point(aes(df_irrigation_EKSRB$Year, df_irrigation_EKSRB$irrigation_WaterUse_m), color = "red", alpha = 0.7) + 
-  #what is this constant????
-  theme_classic()
-#VERY BIG DISCREPANCY HERE ~3 orders mag
-
-
-#by crop for EKSRB.. does this match sw quality input?
-df_irrigation_EKSRBcrop <- read_csv(file.path("data", "WaterUseByCrop_EKSRB.csv")) |> 
-  filter(Crop %in% c("Corn", "Sorghum","Soybeans", "Wheat")) |> group_by(Year) |>
-  mutate(irrigation_m_mean = waterUse_m3 / (irrArea_ha*10000) ) |> #when using watershed area the mags match - 14633204866
-  summarise(irrigation_WaterUse_m = mean(irrigation_m_mean)) |>  #should this be summed or averaged>????
+  summarise(irrigation_WaterUse_mm = mean(irrigation_WaterUse_mm)) |> #should this be summed or averaged>????
   mutate(spatial_scale = "basin")
 
-ggplot() + 
-  
-  geom_point(aes(df_irrigation_EKSRB$Year, df_irrigation_EKSRB$irrigation_WaterUse_m), color = "red", alpha = 0.7) + 
-  
-  geom_point(aes(df_irrigation_EKSRBcrop$Year, df_irrigation_EKSRBcrop$irrigation_WaterUse_m), color = "lightblue", alpha = 0.9) + 
-  
-  geom_point(aes(df_irrigation_CropSum$Year, df_irrigation_CropSum$irrigation_WaterUse_m), color = "darkblue", alpha = 0.6) + 
 
-  theme_classic()
+```
 
-#irr by crop across EKSRB matches total irr across EKSRB, but irr by crop at the county scale is not right...
+## Fertilizer 
+  - right now just using constant, look up avg'd of rainfed and irr
+  - Need by county and over time by crop (TREND + excel file?)?? 
+  - This ^^ could be a later thing, we would have to make assumptions for future scenarios though... 
+```{r}
+ 
+df_landCoverFertilizer_county <-
+  df_landcover |> 
+  filter(LandCover %in% c("Corn", "Sorghum","Soybeans", "Wheat")) |>
+  mutate(fertilizer_kgHa = 
+           case_when(
+             LandCover == "Corn" ~ 250, # rough average of irr and rainfed
+             LandCover == "Sorghum" ~ 112,
+             LandCover == "Soybeans" ~ 56, # rough average of irr and rainfed
+             LandCover == "Wheat" ~ 89,
+             TRUE ~ NA_real_),
+        fertilizer_kgCrop = fertilizer_kgHa * area_ha,
+        spatial_scale = "county", 
+        FIPS = as.character(FIPS),
+        source = "csv") |>
+        rename(Crop = LandCover)  |>
+  dplyr::select(Year, FIPS, spatial_scale, Crop, fertilizer_kgCrop)
 
+
+```
+
+
+
+## Joining all input datasets
+```{r}
+df_combined <- 
+  df_landcover_all_class |> #need to get historical land use?!
+  left_join(df_irrigation_in , c("Year", "FIPS", "spatial_scale", "LandCoverGroup", "Crop")) |> 
+  left_join(df_landCoverFertilizer_county,  c("Year", "FIPS", "spatial_scale", "Crop")) |>
+  left_join(df_climate_county, c("Year", "FIPS", "spatial_scale"))
+
+unique(df_combined$Year)
+```
+
+
+
+
+## model wrappers
+  1. Crop model
+    - additional inputs = crop yield
+    - select only corn, soy, sorghum, wheat (!is.na(Crop))
+    - model wrapper
+    
+    - Things to consider:
+      - with this approach only have data from 2006-2023 bc of land use data..
+      
+      - Think there is a data mismatch (maybe irr or fert - compare w df combo inputs (simple linear plots))
+```{r}
+#adding additional inputs and trimming
+df_yield <- read_csv(file.path("data", "CropYieldData_County.csv")) |> 
+  subset(Year %in% yrs_common) |> mutate(FIPS = as.character(FIPS))
+
+
+df_crop <- df_combined |> filter(!is.na(Crop)) |>
+  left_join(df_yield, by = c("Year", "FIPS", "Crop")) |> 
+  mutate(irrigation_WaterUse_mm = ifelse(WaterManagement == "Non-Irrigated", 0, irrigation_WaterUse_mm)) |> 
+  # calculate water available
+  mutate(totalWater_mm = precip_mm + irrigation_WaterUse_mm) 
+
+area_ha_thres <- 64.75*10 # 160 acre quarter-section is 64.75 ha
+pdiv_thres <- 3
+df_crop <- 
+  df_crop |> 
+  filter(!(WaterManagement == "Irrigated" & n_pdiv < pdiv_thres)) |> 
+  filter(area_ha_mean > area_ha_thres) 
+
+#Actual model wrapper to fit yield models by crop
+fit_yield_models <- function(data, crop) {
+  
+  df_crop <- subset(data, Crop == crop)
+  
+  # decide predictors based on crop
+  if (crop == "Sorghum") {
+    formula_kcal <- yield_kcalHa_detrended ~ poly(totalWater_mm, 2) #+ tmin_C_avg + tmax_C_avg
+    formula_kg   <- yield_kgHa_detrended ~ poly(totalWater_mm, 2) #+ tmin_C_avg+ tmax_C_avg
+  } else {
+    formula_kcal <- yield_kcalHa_detrended ~ poly(totalWater_mm, 2) #+ tmin_C_avg   + tmax_C_avg
+    formula_kg   <- yield_kgHa_detrended ~ poly(totalWater_mm, 2) #+ tmin_C_avg   + tmax_C_avg
+  }
+  
+  # fit models
+  fit_kcal <- lm(formula_kcal, data = df_crop)
+  fit_kg   <- lm(formula_kg, data = df_crop)
+  
+  # add fitted values
+  df_crop$yield_kcalHa_detrended_fit <- fitted(fit_kcal)
+  df_crop$yield_kgHa_detrended_fit   <- fitted(fit_kg)
+  
+  # package results
+  list(
+    crop = crop,
+    fit_kcal = fit_kcal,
+    fit_kg   = fit_kg,
+    R2 = c(
+      kcalHa = summary(fit_kcal)$adj.r.squared,
+      kgHa   = summary(fit_kg)$adj.r.squared
+    ),
+    data = df_crop   # <- keep augmented dataframe for plotting
+  )
+}
+
+# Run for all crops
+yield_models <- lapply(c("Corn","Soybeans","Sorghum","Wheat"), function(crop) {
+  fit_yield_models(df_crop, crop)
+})
+
+# Combine all augmented dfs back together
+df_combo_aug <- dplyr::bind_rows(lapply(yield_models, function(m) m$data))
+  
+  
+# Make R2 summary table
+df_fit <- do.call(rbind, lapply(yield_models, function(m) {
+  data.frame(
+    Crop = m$crop,
+    fit_R2_kcalHa = m$R2["kcalHa"],
+    fit_R2_kgHa   = m$R2["kgHa"]
+  )
+}))
+
+
+```
+  
+  - plots for ^ model
+```{r}
+ggplot(df_combo_aug, aes(x = totalWater_mm, y = yield_kcalHa_detrended)) +
+  geom_point(aes(color = WaterManagement)) +
+  facet_wrap(~ Crop, scales = "free_y") +
+  labs(x = "Precipitation + Irrigation [mm]", 
+       y = "Yield [kcal/ha]") + 
+  scale_color_manual(
+    name = "Water Management",
+    values = c("blue" , "orange" ) ) + 
+  # fit line is now consistent with wrapper model
+  geom_line(aes(y = yield_kcalHa_detrended_fit), color = "grey", size = 1, alpha = 0.2) +
+    stat_smooth(method = "lm", formula = y ~ poly(x, 2), color = "black") +
+  theme(legend.position = "bottom")
+
+# save figure
+#ggsave(
+ # file.path("figures", "Submodel_CropWater_WaterProductivityCurves.png"),
+ # width = 120, height = 120, units = "mm")
+
+
+
+# Join R² values from wrapper outputs
+r2_df <- df_fit |>
+  select(Crop, fit_R2_kcalHa) |>
+  mutate(
+    label = paste0("R² = ", round(fit_R2_kcalHa, 2))  )
+
+# Predicted vs Observed plot with R² annotations
+ggplot(df_combo_aug, aes(x = yield_kcalHa_detrended_fit, y = yield_kcalHa_detrended)) +
+  geom_abline(intercept = 0, slope = 1, color = "gray") +
+  geom_point(aes(color = WaterManagement)) +
+  facet_wrap(~ Crop, scales = "free") +
+  scale_color_manual(
+    name = "Water Management",
+    values = c("blue" , "orange" ) ) + 
+  stat_smooth(method = "lm", color = "black") +
+  labs(
+    x = "Predicted Yield [kcal/ha]", 
+    y = "Observed Yield [kcal/ha]",
+    title = "Predicted vs Observed"
+  ) +
+  geom_text(
+    data = r2_df, 
+    aes(x = Inf, y = Inf, label = label), 
+    inherit.aes = FALSE, 
+    hjust = 4.1, vjust = 2, size = 3.5
+  )
+
+
+```
+  
+  - something is off with inputs... this output is different than OG crop water with only 2006-2023 data...?
+  
+  2. SW quality model (simplified)
+    - Additional data - N data
+    - Need to use LandCoverGroup in model as variable (not LandCover)
+    - Calc climate vars, run lm
+```{r}
+df_nitrate <- read_csv(file.path("data", "RiverNitrateData_EKSRB.csv"))
+
+df_WQual_LU_long <- df_combined |> 
+  group_by(Year, LandCoverGroup) |> 
+  summarize(group_area_ha = sum(area_ha_mean))|> 
+  pivot_wider(names_from = LandCoverGroup, names_prefix = "LandCover_ha_", 
+              values_from = group_area_ha, values_fill = NA) |>
+  left_join(df_nitrate, by = c("Year"))
+
+df_WQual_climate <- df_combined |>
+  group_by(Year) |> 
+  summarize(Climate_precip_mm = sum(precip_mm),
+            Climate_Tmin_C = mean(tmin_C_avg),
+            Climate_Tmax_C = mean(tmax_C_avg) ) |> 
+  mutate(Climate_Tmean_C = (Climate_Tmin_C + Climate_Tmax_C) / 2 ) |>
+  left_join(df_WQual_LU_long, by = c("Year"))
+
+
+df_WQual_LU_WaterUse <-  df_combined |> 
+  group_by(Year, LandCoverGroup) |> 
+  summarize(waterUse_mm = sum(irrigation_WaterUse_mm, na.rm = TRUE))|> 
+  group_by(Year) |> 
+  summarize(Management_irrigation_mm = sum(waterUse_mm, na.rm = TRUE)) |> 
+  left_join(df_WQual_climate, by = c("Year"))
+
+  
+  
+df_WQual_LU_Fert <- df_combined |> 
+  group_by(Year, LandCoverGroup) |> 
+  summarize(fertilizer_kgCult = sum(fertilizer_kgCrop, na.rm = TRUE))|> 
+  group_by(Year) |> 
+  group_by(Year) |> 
+  summarize(Management_FertilizerUse_kg = sum(fertilizer_kgCult, na.rm = TRUE)) |> 
+  left_join(df_WQual_LU_WaterUse, by = c("Year"))
+
+
+
+
+#work this in!! ^^
+ecdf_precip <- ecdf(df_WQual_LU_Fert$Climate_precip_mm)
+
+# calculate annual percentile and percentile change
+df_WQual_LU_Fert$precip_percentile <- ecdf_precip(df_WQual_LU_Fert$Climate_precip_mm)
+ggplot(df_WQual_LU_Fert, aes(x = Climate_precip_mm, y = precip_percentile)) + geom_point()
+df_WQual_LU_Fert$precip_percentileChange <- df_WQual_LU_Fert$precip_percentile - lag(df_WQual_LU_Fert$precip_percentile, 1)
+
+
+           
+
+
+# --- Water Quality Model Wrapper ---
+run_waterquality_model <- function(df) {
+  
+  # Fit MLR model
+  mlr_nitrate <- lm(
+    NitrateFlux_kg ~ 
+      LandCover_ha_developed + 
+      LandCover_ha_grassPastureHay + 
+      `LandCover_ha_all cult` + 
+      Climate_precip_mm + 
+      Climate_Tmean_C + 
+    #  Climate_SPEI6_mean + 
+     precip_percentileChange + 
+     Management_irrigation_mm + 
+      Management_FertilizerUse_kg,
+    data = df
+  )
+  
+  # Add predictions
+  df$NitrateFluxPredicted_kg <- predict(mlr_nitrate, newdata = df)
+  
+  # Calculate evaluation metric(s)
+  mae_val <- mae(df$NitrateFluxPredicted_kg, df$NitrateFlux_kg, na.rm = TRUE)
+  nmae_val <- mae_val / (max(df$NitrateFluxPredicted_kg, na.rm = TRUE) - 
+                         min(df$NitrateFluxPredicted_kg, na.rm = TRUE))
+  
+  # Return structured output
+  list(
+    data = df,
+    model = mlr_nitrate,
+    performance = list(MAE = mae_val, NMAE = nmae_val)
+  )
+}
+
+```
+
+```{r}
+# Run wrapper
+df_WQual_all <- df_WQual_LU_Fert |> drop_na()
+wq_results <- run_waterquality_model(df_WQual_all)
+
+# Access outputs
+df_wq_aug <- wq_results$data
+summary(wq_results$model)
+wq_results$performance
+
+
+df_wq_aug %>%
+  dplyr::select(Year, NitrateFlux_kg, NitrateFluxPredicted_kg, NitrateFluxShreyaPredicted_kg) %>%
+  pivot_longer(-Year, names_to = "Variable", values_to = "NitrateFlux_kg") %>%
+  mutate(Source = case_when(
+    Variable == "NitrateFlux_kg" ~ "Observed",
+    Variable == "NitrateFluxPredicted_kg" ~ "Optimization MLR",
+    Variable == "NitrateFluxShreyaPredicted_kg" ~ "Shreya MLR"
+  )) %>%
+  ggplot(aes(x = Year, y = NitrateFlux_kg, color = Source)) +
+  geom_point() +
+  geom_line() +
+  scale_color_manual(
+    name = NULL, values = c("black", "red", "green")
+  ) +
+  labs(y = "Nitrate Flux [kg/yr]", title = "Water Quality Model Validation") +
+  theme(
+    legend.position = "inside", 
+    legend.position.inside = c(0.05, 0.95),
+    legend.justification = c(0, 1)
+  ) +
+  guides(color = guide_legend(nrow = 3))
 ```
 

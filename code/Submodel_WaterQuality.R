@@ -107,6 +107,8 @@ df_climate_ready <-
          Climate_SPEI6_mean = SPEI6_mean,
          Climate_precip_percentileChange = precip_percentileChange)
 
+
+
 ## irrigation: sum all sources in each year
 df_irrigation_ready <- 
   df_irrigation |> 
@@ -152,13 +154,15 @@ mlr_nitrate <- lm(NitrateFlux_kg ~
                     LandCover_ha_crop + 
                     Climate_precip_mm + 
                     Climate_Tmean_C + 
-                    Climate_SPEI6_mean + 
+                   # Climate_SPEI6_mean + 
                     Climate_precip_percentileChange + 
-                    Management_irrigation_m3 + 
-                    Management_FertilizerUse_kg, 
+                    Management_irrigation_m3, # + 
+                   # Management_FertilizerUse_kg, 
                   data = df_combined)
 
 df_combined$NitrateFluxPredicted_kg <- predict(mlr_nitrate, newdata = df_combined)
+
+summary(mlr_nitrate)
 
 # compare NitrateFlux_kg, NitrateFluxPredicted_kg, NitrateFluxShreyaPredicted_kg
 df_combined |> 
