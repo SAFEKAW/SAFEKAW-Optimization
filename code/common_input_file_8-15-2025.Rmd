@@ -34,9 +34,8 @@ source(file.path("code", "paths+packages.R"))
   
 ## Climate
  - Two submodels have different climate data sources
- - Crop model is annual and for each county
- - Water quality is monthly averages over entire basin 
- - In this first code block, inputs from county level are aggregated (sum and mean) for each county and across the basin and compared to the EKSRB input data file. They are now in agreement, so county level is the common input (df_climate_all)
+ - Crop model is annual and for each county, while water quality is monthly averages over entire basin 
+ - Using county data, but cannot calculate SPEI in SW quality model if I do this (I can, it'll just be more pieces to move and optimize...)
 
 ```{r}
 yrs_common <- 1990:2023
@@ -102,21 +101,20 @@ df_landcover_all_class <-
 
 
 ```
-   - likely need to add in the NLCD early years (1990~2005) from Shreya's model and do a linear regression to gap fill!
+   - likely need to add in the NLCD early years (1990~2005) from Shreya's model and do a linear regression to gap fill!?
    - Crop model needs to subset within model wrapper
    
    
 ## Irrigated water use
   - three potential data sources: WaterUseData_County.csv (crop model), WaterUseData_EKSRB.csv (sw qualtiy model), 
   intermediate between the two (WaterUseByCrop_EKSRB.csv)
-  - the county data, already in mm (what area was this divided by??), when summed is 0.5 to 8 mm, when avg is closer to right mag
-  - the basin data is very very small, but likely bc normalized to the wrong area (entire watershed right now - needs to be cropped area? Or unit is off with watershed area - needs to be divided by 1*10^8??)
-  - Crop by area across EKSRB is same mag as county data when averaged
+  - using county data, leaving irr as mm for both crop and SW quality models
 ```{r}
 #crop
 df_irrigation_in <- read_csv(file.path("data", "WaterUseData_County.csv")) |> 
   subset(Year %in% yrs_common) |> 
   mutate(irrigation_WaterUse_mm = irrigation_mm_mean , 
+       #  irrigation_WaterUse_ha = ,
          FIPS = as.character(FIPS),
          spatial_scale = "county",
          source = "Crop input",
@@ -170,7 +168,7 @@ unique(df_combined$Year)
 ```
 
 
-
+  - in terms of integration, irr needs to be a fx of land use area, which means I need irr as vol!!
 
 ## model wrappers
   1. Crop model
@@ -181,7 +179,6 @@ unique(df_combined$Year)
     - Things to consider:
       - with this approach only have data from 2006-2023 bc of land use data..
       
-      - Think there is a data mismatch (maybe irr or fert - compare w df combo inputs (simple linear plots))
 ```{r}
 #adding additional inputs and trimming
 df_yield <- read_csv(file.path("data", "CropYieldData_County.csv")) |> 
@@ -201,18 +198,18 @@ df_crop <-
   filter(!(WaterManagement == "Irrigated" & n_pdiv < pdiv_thres)) |> 
   filter(area_ha_mean > area_ha_thres) 
 
-#Actual model wrapper to fit yield models by crop
+#Model wrapper to fit yield models by crop
 fit_yield_models <- function(data, crop) {
   
   df_crop <- subset(data, Crop == crop)
   
   # decide predictors based on crop
   if (crop == "Sorghum") {
-    formula_kcal <- yield_kcalHa_detrended ~ poly(totalWater_mm, 2) #+ tmin_C_avg + tmax_C_avg
-    formula_kg   <- yield_kgHa_detrended ~ poly(totalWater_mm, 2) #+ tmin_C_avg+ tmax_C_avg
+    formula_kcal <- yield_kcalHa_detrended ~ poly(totalWater_mm, 2) + tmin_C_avg + tmax_C_avg
+    formula_kg   <- yield_kgHa_detrended ~ poly(totalWater_mm, 2) + tmin_C_avg+ tmax_C_avg
   } else {
-    formula_kcal <- yield_kcalHa_detrended ~ poly(totalWater_mm, 2) #+ tmin_C_avg   + tmax_C_avg
-    formula_kg   <- yield_kgHa_detrended ~ poly(totalWater_mm, 2) #+ tmin_C_avg   + tmax_C_avg
+    formula_kcal <- yield_kcalHa_detrended ~ poly(totalWater_mm, 2) + tmin_C_avg   + tmax_C_avg
+    formula_kg   <- yield_kgHa_detrended ~ poly(totalWater_mm, 2) + tmin_C_avg   + tmax_C_avg
   }
   
   # fit models
@@ -236,6 +233,9 @@ fit_yield_models <- function(data, crop) {
   )
 }
 
+
+
+
 # Run for all crops
 yield_models <- lapply(c("Corn","Soybeans","Sorghum","Wheat"), function(crop) {
   fit_yield_models(df_crop, crop)
@@ -256,6 +256,44 @@ df_fit <- do.call(rbind, lapply(yield_models, function(m) {
 
 
 ```
+ 
+```{r}
+# --- Higher level Model Wrapper for integration using fit_yield_models() ---
+run_crop_models <- function(df) {
+  crops <- unique(df$Crop)
+  
+  results <- lapply(crops, function(crop) {
+    fit_yield_models(df, crop)   # <- now passing crop explicitly
+  })
+  
+  # Combine all augmented crop data
+  df_combo_aug <- do.call(rbind, lapply(results, function(x) x$data))
+  
+  # Summarize fit stats
+  df_fit <- data.frame(
+    Crop = sapply(results, function(x) x$crop),
+    fit_R2_kcalHa = sapply(results, function(x) x$R2["kcalHa"]),
+    fit_R2_kgHa   = sapply(results, function(x) x$R2["kgHa"])
+  )
+  
+  list(
+    data = df_combo_aug,
+    fit_stats = df_fit,
+    models = results
+  )
+}
+
+# Should now work without the "crop missing" error
+crop_results <- run_crop_models(df_crop)
+
+# Look at first few rows of augmented data
+head(crop_results$data)
+
+# Look at model R2s
+crop_results$fit_stats
+```
+ 
+ 
   
   - plots for ^ model
 ```{r}
@@ -309,12 +347,13 @@ ggplot(df_combo_aug, aes(x = yield_kcalHa_detrended_fit, y = yield_kcalHa_detren
 
 ```
   
-  - something is off with inputs... this output is different than OG crop water with only 2006-2023 data...?
+  - OG model (1990-2023) and this model (2006-2023) are in agreement
   
   2. SW quality model (simplified)
     - Additional data - N data
     - Need to use LandCoverGroup in model as variable (not LandCover)
-    - Calc climate vars, run lm
+    - Agg across counties to basin scale, calc climate vars
+    - lm fx
 ```{r}
 df_nitrate <- read_csv(file.path("data", "RiverNitrateData_EKSRB.csv"))
 
@@ -401,7 +440,8 @@ run_waterquality_model <- function(df) {
 }
 
 ```
-
+  
+  - Run lm and assess outputs
 ```{r}
 # Run wrapper
 df_WQual_all <- df_WQual_LU_Fert |> drop_na()
@@ -436,3 +476,186 @@ df_wq_aug %>%
   guides(color = guide_legend(nrow = 3))
 ```
 
+ 3. Farmer net return model (place holder for more general community resilience)
+  - From Ikenna paper, NR (dollar/ha) = Yield (kg/ha) X Price (dollar/kg) - sum(cost_irr (dollar/ha) + other prod costs)
+  - only have corn right now
+ 
+```{r}
+# --- Universal costs ---
+universal_costs <- list(
+  fert_cost_ha = 469.8,       # $/ha
+  irr_cost_per_m3 = 0.029     # $/m3
+)
+
+# --- Crop-specific info ---
+crop_params <- tibble::tribble(
+  ~Crop,       ~price_per_kg, ~seed_cost_ha,
+  "Corn",      0.18,          243
+  #,"Soybeans", 0.40,          150   # <- add later
+  #,"Wheat",    0.25,          120
+  #,"Sorghum",  0.12,          100
+)
+
+# --- Join crop params + compute NR ---
+df_combo_NR <- df_combo_aug %>%
+  # join in crop-specific info
+  left_join(crop_params, by = "Crop") %>%
+  # compute NR
+  mutate(
+    fert_cost = universal_costs$fert_cost_ha,
+    irr_cost  = irrigation_WaterUse_mm * universal_costs$irr_cost_per_m3,
+    NetReturn_dollarHa = (yield_kgHa_detrended_fit * price_per_kg) -
+                         (fert_cost + seed_cost_ha + irr_cost)
+  )
+
+#plot
+df_combo_NR %>%
+  group_by(Year, Crop) %>%
+  summarise(mean_NR = mean(NetReturn_dollarHa, na.rm = TRUE), .groups = "drop") %>%
+  ggplot(aes(x = Year, y = mean_NR, color = Crop)) +
+  geom_line(size = 1) +
+  geom_point(size = 2) +
+  labs(
+    title = "Annual Net Returns by Crop",
+    y = "Net Return ($/ha)",
+    x = "Year"
+  ) +
+  theme_test(base_size = 14)
+```
+ 
+ 
+# Integration fx - can pull this into different R markdown if this one is getting too long
+  - NR function in the int code rather than indep. like ^^ (once int is validated I will remove above code chunk!)
+
+```{r}
+# --- Define your cost/price parameters ---
+universal_costs <- list(
+  irr_cost_ha = 0.029,   # $/m3 - likely mismatched with the data (mm - working in getting irr_ha by crop by county)
+  fert_cost_ha = 469.8   # $/ha (constant across crops)
+)
+
+crop_params <- list(
+  Corn = list(
+    profit_perkg = 0.18,  # $/kg
+    seed_cost = 243       # $/ha
+  )
+  # Add other crops here as you get data
+)
+
+
+# --- Updated integrate_models function ---
+integrate_models <- function(df_crop_input, df_wq_input,
+                             crop_params, universal_costs) {
+  
+  # Run crop submodels
+  crop_results <- run_crop_models(df_crop_input)
+  
+  # Run water quality submodel
+  wq_results <- run_waterquality_model(df_wq_input)
+  
+  # Harmonize outputs to annual basin scale (crop side)
+  crop_summary <- crop_results$data %>%
+    group_by(Year, Crop) %>%
+    summarise(
+      Yield_kcalHa = mean(yield_kcalHa_detrended_fit, na.rm = TRUE),
+      Yield_kgHa   = mean(yield_kgHa_detrended_fit, na.rm = TRUE),
+      .groups = "drop"
+    ) %>%
+    # Add net return calculation
+    mutate(
+      Net_Return = case_when(
+        Crop == "Corn" ~ (Yield_kgHa * crop_params$Corn$profit_perkg) -
+                         (universal_costs$fert_cost_ha + crop_params$Corn$seed_cost),
+        TRUE ~ NA_real_   # placeholder for other crops
+      )
+    )
+  
+  # Harmonize outputs to annual basin scale (WQ side)
+  wq_summary <- wq_results$data %>%
+    group_by(Year) %>%
+    summarise(
+      NitrateFluxPred_kg = mean(NitrateFluxPredicted_kg, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  # Merge summaries
+  integrated_df <- left_join(crop_summary, wq_summary, by = "Year")
+  
+  # Return integrated results
+  list(
+    integrated_data = integrated_df,
+    crop = crop_results,
+    waterquality = wq_results
+  )
+}
+
+
+# --- Run integration with NR included ---
+integration_results <- integrate_models(df_crop, df_WQual_all, crop_params, universal_costs)
+
+# See harmonized outputs
+integration_results$integrated_data %>% head()
+
+
+#plots from integrated data
+
+
+```
+
+  - checking integrated outputs
+```{r}
+df_int <- integration_results$integrated_data
+df_long <- df_int %>%
+  select(Year, Crop, Yield_kcalHa, Yield_kgHa, Net_Return, NitrateFluxPred_kg) %>%
+  pivot_longer(cols = c(Yield_kcalHa, Yield_kgHa, Net_Return, NitrateFluxPred_kg),
+               names_to = "Variable", values_to = "Value")
+
+ggplot(df_long, aes(x = Year, y = Value, color = Crop)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ Variable, scales = "free_y", ncol = 2) +
+  labs(title = "Integrated Model Outputs Over Time",
+       y = "Value", x = "Year")
+```
+  
+  - initial pareto frontier plots
+```{r}
+ggplot(df_int, aes(x = NitrateFluxPred_kg, 
+                   y = Net_Return, 
+                   color = Yield_kcalHa,
+                   shape = Crop)) +
+  geom_point(size = 4) +
+  scale_color_viridis_c(name = "Yield (kcal/ha)") +
+  labs(title = "Pareto Frontier: Yield, Net Return, and Nitrate Flux",
+       x = "Nitrate Flux (kg)",
+       y = "Net Return ($/ha)") +
+  theme_test()
+
+
+
+#install.packages("rPref")
+library("rPref")
+
+# Calculate Skyline
+sky1 <- psel(df_int, high(Yield_kgHa) * low(NitrateFluxPred_kg))
+# Plot mpg and hp values of mtcars and highlight the skyline
+ggplot(df_int, aes(x =NitrateFluxPred_kg , y = Yield_kgHa)) + geom_point(shape = 21) +   geom_point(data = sky1, size = 3)
+
+
+
+p <- high(Yield_kgHa) * low(NitrateFluxPred_kg)
+# Calculate the level-value w.r.t. p by using top-all
+res <- psel(df_int, p, top = nrow(df_int))
+# Visualize the level values by the color of the points
+gp <- ggplot(res, aes(x =NitrateFluxPred_kg , y = Yield_kgHa, color = factor(.level))) +
+  geom_point(size = 3)
+gp
+
+gp + geom_step(direction = "vh")
+
+```
+
+
+- next steps... 
+    - need to get irr data (irr_ha by crop, county, year, not just irr amount (mm)) - talk with Sam
+    - need to calc GDD from gridmet climate data (by crop, county, year)
