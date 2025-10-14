@@ -1,5 +1,5 @@
 ---
-title: "Common input file"
+title: "01_Common_input_file"
 author: "BRW"
 date: "2025-08-15"
 output: html_document
@@ -56,7 +56,7 @@ df_climate_county <- read_csv(file.path("data", "ClimateData_County.csv")) |>
   group_by(Year, FIPS, spatial_scale) |>
   summarise(
     precip_m      = sum(precip_mm_gridmet)/1000,     # annual depth (m)
-    precip_m_avg  = mean(precip_mm_gridmet)/1000,    # mean depth (m) — keep if you use it
+    precip_m_avg  = mean(precip_mm_gridmet)/1000,    # mean depth (m) — do we want area weighted or no?
     tmin_C_avg    = mean(tmmn_C_gridmet),
     tmax_C_avg    = mean(tmmx_C_gridmet),
     .groups = "drop"
@@ -239,11 +239,11 @@ stopifnot(all(c("Year","Climate_precip_m","Climate_Tmean_C",
 
 
 
-#save files 
+ - save files 
 ```{r}
-write_csv(df_combined,          "common_inputs_county.csv")
-write_csv(common_input_basin,   "common_inputs_basin.csv")
-write_csv(df_county_areas,      "county_areas.csv")
+write_csv(df_combined,          "data/common_inputs_county.csv")
+write_csv(common_input_basin,   "data/common_inputs_basin.csv")
+write_csv(df_county_areas,      "data/county_areas.csv")
 
 ```
 
