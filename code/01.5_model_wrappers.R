@@ -267,19 +267,89 @@ run_waterquality_model <- function(df) {
 # yield_kgHa_detrended_fit, Irrigation_m3Ha_pred, Crop (to join crop_params)
 # crop_params: tibble/data.frame with Crop, profit_perkg(or price_per_kg), seed_cost_ha
 # universal_costs: list(fert_cost_ha=..., irr_cost_per_m3=...)
-compute_net_returns <- function(df_rows, crop_params, universal_costs) {
-  cp <- normalize_crop_params(crop_params)
+#compute_net_returns <- function(df_rows, crop_params, universal_costs) {
+ # cp <- normalize_crop_params(crop_params)
   
-  df_rows |>
-    left_join(cp, by = "Crop") |>
-    mutate(
-      Irrigation_m3     = coalesce(Irrigation_m3_total, 0),
-      profit_perkg             = replace_na(profit_perkg, 0),
-      seed_cost_ha             = replace_na(seed_cost_ha, 0),
-      yield_kgHa_detrended_fit = coalesce(yield_kgHa_detrended_fit, 0),
-      fert_cost_ha             = universal_costs$fert_cost_ha,
-      irr_cost_ha              = Irrigation_m3Ha_pred * universal_costs$irr_cost_per_m3,
-      profit_ha                = yield_kgHa_detrended_fit * profit_perkg,
-      NetReturn_dollar_ha      = profit_ha - (fert_cost_ha + seed_cost_ha + irr_cost_ha)
-    )
-}
+ # df_rows |>
+  #  left_join(cp, by = "Crop") |>
+  #  mutate(
+   #   Irrigation_m3     = coalesce(Irrigation_m3_total, 0),
+    #  profit_perkg             = replace_na(profit_perkg, 0),
+    #  seed_cost_ha             = replace_na(seed_cost_ha, 0),
+    # yield_kgHa_detrended_fit = coalesce(yield_kgHa_detrended_fit, 0),
+    #  fert_cost_ha             = universal_costs$fert_cost_ha,
+    #  herb_pest_cost_ha        = universal_costs$herb_pest_cost_ha,
+    #  irr_cost_ha              = Irrigation_m3Ha_pred * universal_costs$irr_cost_per_m3,
+    #  profit_ha                = yield_kgHa_detrended_fit * profit_perkg,
+    #  NetReturn_dollar_ha      = profit_ha - (fert_cost_ha + herb_pest_cost_ha + seed_cost_ha + irr_cost_ha)
+  #  )
+#}
+  
+  #UPDATED 10/14/2025
+  #https://ag.purdue.edu/commercialag/home/paer-article/2023-purdue-crop-cost-and-return-guide/
+
+  # Requires per-row: Crop, yield_kgHa_detrended_fit, Irrigation_m3Ha_pred (or Irrigation_m3_total/area)
+  # crop_params: at least Crop, profit_perkg, seed_cost_ha
+  # Optional (recommended): fert_kgHa, fert_price_per_kg, fert_app_cost_ha,
+  #                         herb_pest_cost_ha, crop_insurance_cost_ha,
+  #                         drying_cost_ha, machinery_variable_cost_ha,
+  #                         other_variable_costs_ha
+  # universal_costs: list(irr_cost_per_m3 = ..., defaults for fert_price_per_kg / fert_app_cost_ha if not in crop_params)
+  compute_net_returns <- function(df_rows, crop_params, universal_costs) {
+    `%||%` <- function(a, b) if (is.null(a)) b else a
+    
+    # --- 0) Harmonize df_rows column names (so wrappers don't break) ---
+    if (!"fert_kgHa" %in% names(df_rows) && "fertilizer_kgHa" %in% names(df_rows)) {
+      df_rows <- rename(df_rows, fert_kgHa = fertilizer_kgHa)
+    }
+    # If your irrigation depth per ha sometimes comes in as a different name, normalize it here too:
+    if (!"Irrigation_m3Ha_pred" %in% names(df_rows) && "irr_depth_m_pred" %in% names(df_rows)) {
+      df_rows <- rename(df_rows, Irrigation_m3Ha_pred = irr_depth_m_pred)
+    }
+    
+    # --- 1) Normalize crop_params & avoid name collisions on join ---
+    cp <- crop_params %>%
+      mutate(
+        price_per_kg              = coalesce(price_per_kg, 0),
+        seed_cost_ha              = coalesce(seed_cost_ha, 0),
+        fert_kgHa                 = coalesce(fert_kgHa, NA_real_),  # may be NA; we'll coalesce later
+        fert_price_per_kg         = coalesce(fert_price_per_kg, universal_costs$fert_price_per_kg %||% 0),
+        herb_pest_cost_ha         = coalesce(herb_pest_cost_ha, 0),
+       # drying_cost_ha            = coalesce(drying_cost_ha, 0),
+      #  machinery_variable_cost_ha= coalesce(machinery_variable_cost_ha, 0),
+        other_variable_costs_ha   = coalesce(other_variable_costs_ha, 0),
+        crop_insurance_ha         = coalesce(crop_insurance_ha, 0)#,
+        #fert_app_cost_ha          = coalesce(universal_costs$fert_app_cost_ha %||% 0)
+      ) %>%
+      # Rename fert_kgHa to avoid .x/.y suffixes after join
+      rename(fert_kgHa_cp = fert_kgHa)
+    
+    # --- 2) Join & compute per-ha economics ---
+    df_rows %>%
+      left_join(cp, by = "Crop") %>%
+      mutate(
+        yield_kgHa_detrended_fit = coalesce(yield_kgHa_detrended_fit, 0),
+        Irrigation_m3Ha_pred     = coalesce(Irrigation_m3Ha_pred, 0),
+        
+        # Effective fertilizer rate (prefer per-row if present; else crop_params; else 0)
+        fert_kgHa_eff            = coalesce(fert_kgHa, fert_kgHa_cp, 0),
+        
+        # Revenue per ha
+        revenue_ha               = yield_kgHa_detrended_fit * price_per_kg,
+        
+        # Fertilizer cost per ha (material + application)
+        fert_material_cost_ha    = fert_kgHa_eff * fert_price_per_kg,
+        #fert_cost_ha             = fert_material_cost_ha + fert_app_cost_ha,
+        
+        # Irrigation cost per ha
+        irr_cost_ha              = Irrigation_m3Ha_pred * (universal_costs$irr_cost_per_m3 %||% 0),
+        
+        # Sum variable costs
+        var_costs_ha = seed_cost_ha + herb_pest_cost_ha ++ other_variable_costs_ha +
+          crop_insurance_ha + fert_material_cost_ha + irr_cost_ha,
+        
+        NetReturn_dollar_ha = revenue_ha - var_costs_ha
+      )
+  }
+  
+  

@@ -121,7 +121,7 @@ df_irrigation_in <- read_csv(file.path("data", "WaterUseData_County.csv")) |>
 ```
 
 ## Fertilizer 
-  - right now just using constant, look up avg'd of rainfed and irr
+  - right now just using constant, avg of rainfed and irr
   - How specific do we want to be? County and over time by crop (TREND + excel file?)?? 
   - This ^^ could be a later thing, we would have to make assumptions for future scenarios though... 
 ```{r}

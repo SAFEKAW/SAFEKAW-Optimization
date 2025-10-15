@@ -178,20 +178,44 @@ ggplot(df_wq_aug, aes(x = NitrateFlux_kg, y = NitrateFluxPredicted_kg)) +
 #Net Return (per-row, from modeled irrigation & fitted yield)
 ```{r}
 universal_costs <- list(
-  fert_cost_ha    = 469.8,   # $/ha
-  irr_cost_per_m3 = 0.029    # $/m³
-)
+  fert_app_cost_ha    = 470,   # $/ha - is this a flat operational cost or what?
+#  herb_pest_cost_ha = 250, #$/ha  (Ikenna AWM, 2025, same here ^)
+  irr_cost_per_m3 = 0.029 )   # $/m³ (Kisekka et al., 2016)
+ 
+# https://ag.purdue.edu/commercialag/home/paer-article/2023-purdue-crop-cost-and-return-guide
+
 crop_params <- tibble::tribble(
-  ~Crop,      ~price_per_kg, ~seed_cost_ha,
-  "Corn",      0.18,         243,
-  "Soybeans",  0.40,         150,
-  "Wheat",     0.25,         120,
-  "Sorghum",   0.12,         100
+  ~Crop,       ~price_per_kg, ~seed_cost_ha, ~fert_kgHa, ~fert_price_per_kg, 
+  ~herb_pest_cost_ha,  
+  ~other_variable_costs_ha, ~crop_insurance_ha,
+
+  # Rotation Corn (Purdue Table 1, avg-prod soil)
+  "Corn",      0.25,          245,           250,         2,
+               120,          
+               75,            50,
+
+  # Rotation Soybeans
+  "Soybeans",  0.50,          150,            55,         8.5,
+               75,            
+               100,             40,
+
+  # Wheat
+  "Wheat",     0.3,          120,            90,         5,
+               45,             
+                70,             10,
+
+  # Sorghum — not in Purdue 2023; placeholders (edit as needed)
+  "Sorghum",   0.2,          100,           110,         4.5,
+               50,            
+               75,             10
 )
 
+
 df_combo_NR <- compute_net_returns(df_combo_aug, crop_params, universal_costs)
- 
+
 ```
+
+
 
 
  - aggregating at the two scales and visualizing
