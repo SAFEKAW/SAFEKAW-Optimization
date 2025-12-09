@@ -17,6 +17,10 @@ knitr::opts_chunk$set(echo = TRUE)
 
 Setup (paths + packages + model wrappers + load CSVs)
 ```{r}
+library(lme4)
+library(performance)
+library(MuMIn)
+
 getwd()
 source(file.path("code","paths+packages.R"))          #loads path & packages (from original files)
 source(file.path("code", "01.5_model_wrappers.R"))   # loads model wrappers
@@ -37,14 +41,20 @@ df_county_areas  <- read_csv(file.path("data","county_areas.csv"))
 irr_val <- run_irrigation_stat_existing(df_combined)
 print(irr_val$diagnostics)
 
+r2_df_irr <- round(as.numeric(irr_val$diagnostics[3]), 2)
+
+r2_df_irr
+
 p_irr_val <- irr_val$data %>%
   ggplot(aes(x = irrigation_WaterUse_m, y = irr_pred_m)) +
   geom_point(aes(color = Crop), alpha = 0.7) +
   geom_abline(intercept = 0, slope = 1, color = "red", linewidth = 1, linetype = "dashed") +
   labs(x = "Observed irrigation depth (m)",
        y = "Predicted irrigation depth (m)",
-       title = "Observed vs Predicted Irrigation (training subset)") +
-  theme_test(base_size = 12)
+       title = "Observed vs Predicted Irrigation") +
+   geom_text(data = as.data.frame(r2_df_irr), aes(x = Inf, y = Inf, label =  paste0("R² = ",r2_df_irr)),
+            inherit.aes = FALSE, hjust = 5.5, vjust = 2.5, size = 5) +
+  theme_test(base_size = 15)
 p_irr_val
 
 #ggsave(file.path("..","Irrigation_ObsVsPred_training.png"), p_irr_val, width = 7, height = 5, dpi = 300)
@@ -57,7 +67,7 @@ p_irr_val_res<- irr_val$data %>%
   geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
   labs(x = "Predicted irrigation (m)", y = "Residual (obs - pred)",
        title = "Irrigation residuals vs prediction") +
-  theme_test(base_size = 12)
+  theme_test(base_size = 15)
 p_irr_val_res
 ```
  
@@ -121,12 +131,31 @@ p_predobs <- ggplot(df_combo_aug,
   labs(x = "Predicted Yield (kcal/ha)", y = "Observed Yield (kcal/ha)",
        title = "Predicted vs Observed Yield") +
   geom_text(data = r2_df, aes(x = Inf, y = Inf, label = label),
-            inherit.aes = FALSE, hjust = 1.1, vjust = 1.2, size = 3.5) +
-  theme_test(base_size = 12)
+            inherit.aes = FALSE, hjust = 4.1, vjust = 1.2, size = 3.5) +
+  theme_test(base_size = 14)
 #ggsave(file.path("..", "Crop_PredVsObs_byCrop.png"), p_predobs, width = 8, height = 6, dpi = 300)
 p_predobs
 ```
  
+ - more model checking
+```{r}
+mods       <- crop_results$models
+crop_names2 <- sapply(mods, `[[`, "crop")
+crop_idx2  <- which(crop_names2 == "Sorghum")
+performance::r2(mods2[[crop_idx2]]$fit_kcal)
+
+crop_fit <- mods2[[crop_idx2]]$fit_kcal
+summary(crop_fit)   # check random effect variances, fixed-effect signs
+
+# Residual vs fitted
+plot(crop_fit)      
+
+# QQ-plot of residuals
+qqnorm(residuals(crop_fit)); qqline(residuals(crop_fit))
+
+#summary - wheat is not really well predicted by max and min temps... 
+
+```
  
  
  #Water-quality model (basin)
@@ -148,7 +177,10 @@ wq_results <- run_waterquality_model(wq_train)
 
 df_wq_aug  <- wq_results$data
 print(wq_results$performance)
+wq_results$performance
+r2_df_wq <- round(as.numeric(wq_results$performance[3]), 2)
 
+r2_df_wq
 
 # Simple validation plot if observed NitrateFlux_kg exists in common_input_basin
 if ("NitrateFlux_kg" %in% names(df_wq_aug)) {
@@ -171,45 +203,30 @@ ggplot(df_wq_aug, aes(x = NitrateFlux_kg, y = NitrateFluxPredicted_kg)) +
   labs(x = "Observed Nitrate Flux (kg/yr)", 
        y = "Predicted Nitrate Flux (kg/yr)",
        title = "Observed vs Predicted Nitrate Flux") +
-  theme_test()
+    geom_text(data = as.data.frame(r2_df_wq), aes(x = Inf, y = Inf, label =  paste0("R² = ",r2_df_wq)),
+            inherit.aes = FALSE, hjust = 6.5, vjust = 2.5, size = 5) +
+    theme_test(base_size = 14)
+
 ```
  
  
 #Net Return (per-row, from modeled irrigation & fitted yield)
 ```{r}
 universal_costs <- list(
-  fert_app_cost_ha    = 470,   # $/ha - is this a flat operational cost or what?
-#  herb_pest_cost_ha = 250, #$/ha  (Ikenna AWM, 2025, same here ^)
-  irr_cost_per_m3 = 0.029 )   # $/m³ (Kisekka et al., 2016)
- 
-# https://ag.purdue.edu/commercialag/home/paer-article/2023-purdue-crop-cost-and-return-guide
-
-crop_params <- tibble::tribble(
-  ~Crop,       ~price_per_kg, ~seed_cost_ha, ~fert_kgHa, ~fert_price_per_kg, 
-  ~herb_pest_cost_ha,  
-  ~other_variable_costs_ha, ~crop_insurance_ha,
-
-  # Rotation Corn (Purdue Table 1, avg-prod soil)
-  "Corn",      0.25,          245,           250,         2,
-               120,          
-               75,            50,
-
-  # Rotation Soybeans
-  "Soybeans",  0.50,          150,            55,         8.5,
-               75,            
-               100,             40,
-
-  # Wheat
-  "Wheat",     0.3,          120,            90,         5,
-               45,             
-                70,             10,
-
-  # Sorghum — not in Purdue 2023; placeholders (edit as needed)
-  "Sorghum",   0.2,          100,           110,         4.5,
-               50,            
-               75,             10
+  irr_cost_per_m3 = 0.029   # $/m³ (Kisekka et al., 2016)
 )
 
+crop_params <- tribble(
+  ~Crop,           ~income_per_kg, ~direct_cost_per_kg, ~fixed_cost_per_kg, ~total_cost_per_kg, ~fert_kgHa,
+  "Wheat",         0.2,           0.12,                0.05,               0.17,               90,
+  "Corn",          0.18,           0.11,                0.05,               0.15,              250, 
+  "Sorghum", 0.17,           0.09,                0.06,               0.15,                    110,
+  "Soybeans",       0.37,           0.18,                0.14,               0.32,              55
+) %>%
+  
+  mutate(
+    net_return_per_kg = income_per_kg - total_cost_per_kg
+  )
 
 df_combo_NR <- compute_net_returns(df_combo_aug, crop_params, universal_costs)
 
@@ -228,6 +245,7 @@ crop_basin_perha <- df_combo_NR %>%
     NetReturn_ha         = mean(NetReturn_dollar_ha,      na.rm = TRUE),
     Irrigation_m = mean(irr_depth_m_pred,     na.rm = TRUE), 
     Irrigation_m3 = mean(Irrigation_m3_total,     na.rm = TRUE),
+    fert_kgcrop = mean(fertilizer_kgCrop, na.rm = TRUE),
     Crop_area_m2 = mean(area_m2), 
     Crop_area_ha = mean(area_ha),
     Crop_prc =  mean(area_prc),
@@ -242,15 +260,15 @@ crop_basin_perha <- df_combo_NR %>%
 
 
 df_long_crop <- crop_basin_perha %>%
-  select(Year, Crop, Yield_kgHa, NetReturn_ha, NitrateFluxPredicted_kg, Irrigation_m, Crop_prc) %>%
+  select(Year, Crop, Yield_kgHa, NetReturn_ha, NitrateFluxPredicted_kg, Irrigation_m, Crop_prc, fert_kgcrop) %>%
   pivot_longer(
-    cols = c(Yield_kgHa, NetReturn_ha, NitrateFluxPredicted_kg, Irrigation_m, Crop_prc),
+    cols = c(Yield_kgHa, NetReturn_ha, NitrateFluxPredicted_kg, Irrigation_m, Crop_prc, fert_kgcrop),
     names_to = "Variable", values_to = "Value"
   ) %>%
   mutate(Variable = factor(
     Variable,
-    levels = c("Yield_kgHa", "NetReturn_ha", "NitrateFluxPredicted_kg", "Irrigation_m", "Crop_prc"),
-    labels = c("Yield (kg/ha)", "Net Return ($/ha)", "Nitrate Flux (kg/yr)", "Irrigation (m)", "Crop %")
+    levels = c("Yield_kgHa", "NetReturn_ha", "NitrateFluxPredicted_kg", "Irrigation_m", "Crop_prc", "fert_kgcrop"),
+    labels = c("Yield (kg/ha)", "Net Return ($/ha)", "Nitrate Flux (kg/yr)", "Irrigation (m)", "Crop %", "Fertilizer (kg/yr)")
   ))
 
 p_overview_crop <- ggplot(df_long_crop, aes(x = Year, y = Value, color = Crop)) +
@@ -258,6 +276,7 @@ p_overview_crop <- ggplot(df_long_crop, aes(x = Year, y = Value, color = Crop)) 
   facet_wrap(~ Variable, scales = "free_y", ncol = 2) +
   labs(title = "Integrated Model Outputs Over Time (area normXcrop)", x = "Year", y = "Value") +
   theme_test(base_size = 12)
+
 
 p_overview_crop
 
@@ -321,6 +340,21 @@ p_overview_basin <- ggplot(df_long_basin, aes(x = Year, y = Value, color = Varia
   theme_test(base_size = 12)
 
 p_overview_basin
+
 ```
   
+- figure out current proportions of irr/raindfed ag to add constraint to opt
+```{r}
+irr_frac_YR <- 
+  df_combo_NR %>% group_by(Year, WaterManagement, Crop) %>% summarise(area_m2 = sum(area_m2, na.rm = TRUE), .groups = "drop_last") %>% 
+  mutate(total_area_allcrops = sum(area_m2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(
+    frac_of_basin_cultivated = area_m2 / total_area_allcrops)
+
+
+irr_frac_YR %>% ggplot(aes(Year, frac_of_basin_cultivated, color = WaterManagement)) +   facet_wrap(~Crop) + 
+  geom_line() + 
+  theme_test(base_size = 16)
+```
 
