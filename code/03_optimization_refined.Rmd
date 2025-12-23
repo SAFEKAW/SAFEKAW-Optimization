@@ -1,0 +1,686 @@
+---
+title: "R Notebook for SAFEKAW opt using NSGA-II"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+ - setting wd, loading files + sources  
+```{r}
+getwd()
+library(here)
+source(here(file.path("code","paths+packages.R")) )        #loads path & packages (from original files)
+source(here(file.path("code", "01.5_model_wrappers.R")) )  # loads model wrappers
+
+library("rPref")
+library(colourpicker)
+library(mco)
+
+
+df_county_input <- read_csv(here(file.path("data", "common_inputs_county.csv")) )
+df_basin_input_forWQ <- read_csv(here(file.path("data","common_inputs_basin.csv"))) %>% mutate(Management_FertilizerUse_kgm2 = Management_FertilizerUse_kg / `LandCover_m2_all cult`)
+df_county_areas  <- read_csv(here(file.path("data","county_areas.csv")))
+df_int_crop_areanorm <-  read_csv(here(file.path("data","int_crop_areanorm_annual.csv")) )  
+df_int_basin <-  read_csv(here(file.path("data","int_basin_annual.csv"))   )
+
+
+yrs_common <- 2006:2023
+
+
+```
+
+ - color palettes
+```{r}
+
+pal_landcover <- c(
+  "Grass/Pasture/Hay" = "#C1FFC1", #"#9BCD9B",
+  "Cultivated"       = "#8B8B00", #"#8B5742",
+  "Developed"         = "darkgrey"
+)
+
+# crop types
+pal_crops <- c(
+  "Corn"    = "#EEC900",
+  "Soybeans" = "#548B54",
+  "Wheat"   = "#8B7355", ##CD6839,
+  "Sorghum" =  "darkorange"       #"#8B475D"
+)
+
+
+# ggplot2 helper scales so you don't have to retype scale_*_manual every time
+scale_fill_landcover <- function(...) {
+  ggplot2::scale_fill_manual(values = pal_landcover, ...)
+}
+scale_color_landcover <- function(...) {
+  ggplot2::scale_color_manual(values = pal_landcover, ...)
+}
+
+scale_fill_crops <- function(...) {
+  ggplot2::scale_fill_manual(values = pal_crops, ...)
+}
+scale_color_crops <- function(...) {
+  ggplot2::scale_color_manual(values = pal_crops, ...)
+}
+
+```
+
+ - setting params for econ - can move to separate file if needed
+```{r}
+universal_costs <- list(
+  irr_cost_per_m3 = 0.029   # $/m³ (Kisekka et al., 2016)
+)
+
+crop_params <- tribble(
+  ~Crop,           ~income_per_kg, ~direct_cost_per_kg, ~fixed_cost_per_kg, ~total_cost_per_kg, ~fert_kgha,
+  "Wheat",         0.2,           0.12,                0.05,               0.17, 90,
+  "Corn",          0.18,           0.11,                0.05,               0.15, 250,
+  "Sorghum", 0.17,           0.09,                0.06,               0.15, 110, 
+  "Soybeans",       0.37,           0.18,                0.14,               0.32, 55
+) %>%
+  mutate(
+    net_return_per_kg = income_per_kg - total_cost_per_kg
+  )
+
+
+mix_crops <- c("Corn","Soybeans","Sorghum","Wheat")
+
+df_opt <- df_int_crop_areanorm %>%
+  left_join(crop_params, by = "Crop")
+
+
+
+```
+
+ - run wq model - same here
+```{r}
+df_nitrate <- read_csv(here(file.path("data","RiverNitrateData_EKSRB.csv")), show_col_types = FALSE)
+
+df_basin_input_forWQ <- df_basin_input_forWQ %>%
+  left_join(df_nitrate, by = "Year") %>%
+  subset(Year %in% yrs_common)
+
+# Percentile change as in training
+ec <- ecdf(df_basin_input_forWQ$Climate_precip_m)
+wq_context <- df_basin_input_forWQ %>%
+  arrange(Year) %>%
+  mutate(
+    precip_percentile       = ec(Climate_precip_m),
+    precip_percentileChange = tidyr::replace_na(precip_percentile - dplyr::lag(precip_percentile), 0)
+  )
+
+req_wq <- c(
+  "NitrateFlux_kg","LandCover_m2_developed","LandCover_m2_grassPastureHay",
+  "LandCover_m2_all cult","Climate_precip_m","Climate_Tmean_C",
+  "precip_percentileChange","Management_irrigation_m","Management_FertilizerUse_kgm2"
+)
+wq_train <- wq_context %>% tidyr::drop_na(dplyr::all_of(req_wq))
+
+# Use log1p model to enforce positivity at predict time
+wq_model_log1p <- lm(
+  log1p(NitrateFlux_kg) ~ LandCover_m2_developed + LandCover_m2_grassPastureHay + `LandCover_m2_all cult` +
+    Climate_precip_m + Climate_Tmean_C + precip_percentileChange +
+    Management_irrigation_m + Management_FertilizerUse_kgm2,
+  data = wq_train
+)
+summary(wq_model_log1p)
+
+
+
+```
+
+ -  Baseline land cover per year (developed fixed; grass is the slack)
+```{r}
+lu_baseline <- df_basin_input_forWQ %>%
+  select(
+    Year,
+    LC_cult_base  = `LandCover_m2_all cult`,
+    LC_grass_base = LandCover_m2_grassPastureHay,
+    LC_dev_base   = LandCover_m2_developed
+  ) %>%
+  mutate(LC_total = LC_cult_base + LC_grass_base + LC_dev_base)
+```
+
+ - Policy clamp: hard-repair the basin-level irrigated fraction 0..1
+```{r}
+enforce_irrigation_policy <- function(theta_irrig, policy, baseline_irrig_frac) {
+  if (is.null(policy) || is.null(policy$type)) return(theta_irrig)
+  if (policy$type == "rainfed_cap") {
+    max_allowed <- min(1, baseline_irrig_frac * policy$factor)
+    return(pmin(theta_irrig, max_allowed))
+  } else if (policy$type == "irrigation_floor") {
+    min_allowed <- max(0, baseline_irrig_frac * policy$factor)
+    return(pmax(theta_irrig, min_allowed))
+  }
+  theta_irrig
+}
+```
+
+ - Allocate irrigated vs rainfed shares by crop to hit basin-level theta
+```{r}
+allocate_irrigation <- function(crop_shares, theta_irrig, hist_mix = NULL, mode = "preserve_hist_mix") {
+  crops <- names(crop_shares)
+  cult_total <- sum(crop_shares)
+  if (cult_total <= 0) {
+    z <- setNames(rep(0, length(crops)), crops)
+    return(list(irrig = z, rainfed = z))
+  }
+  if (is.null(hist_mix) || mode == "uniform_by_crop") {
+    irrig_by_crop <- crop_shares * theta_irrig
+  } else {
+    f_hist <- setNames(hist_mix$irrig_frac_crop[match(crops, hist_mix$crop)], crops)
+    if (all(!is.finite(f_hist))) f_hist[] <- 1/length(crops)
+    f_hist[!is.finite(f_hist)] <- mean(f_hist, na.rm = TRUE)
+    raw <- crop_shares * pmax(pmin(f_hist, 1), 0)
+    s <- sum(raw)
+    if (s > 0) {
+      irrig_by_crop <- raw * (theta_irrig * cult_total / s)
+      irrig_by_crop <- pmin(irrig_by_crop, crop_shares) # safety
+    } else {
+      irrig_by_crop <- crop_shares * theta_irrig
+    }
+  }
+  list(irrig = irrig_by_crop, rainfed = pmax(crop_shares - irrig_by_crop, 0))
+}
+```
+ 
+
+ - One-year scorer (uses dynamic-LU logic)
+```{r}
+eval_candidate <- function(
+  x, Y, df_opt, wq_model_log1p, wq_context, lu_baseline, universal_costs,
+  lu_change_cost_per_ha = 0,
+  
+  # NEW: irrigation controls (baseline + scenario knob)
+  baseline_irrig_frac = 0.48,
+  policy = NULL,
+  hist_mix = NULL,
+  alloc_mode = "preserve_hist_mix",
+  
+  baseline_mode = TRUE
+){
+  PEN <- 1e12
+
+  # 0) decision vector -> shares (+ leftover wheat); basic feasibility
+  corn <- x[1]; soy <- x[2]; sor <- x[3]; dpp <- x[4]
+  theta_irrig_raw <- x[5]
+
+  # --- BASELINE MODE: turn off scenario knobs -----------------------
+  if (baseline_mode) {
+    dpp            <- 0                  # no ∆ cultivated area
+    theta_irrig_raw <- baseline_irrig_frac  # keep basin irrigated fraction at current baseline
+    policy         <- NULL               # no irrigation floor/cap policy
+    lu_change_cost_per_ha <- 0           # no penalty for LU change (we're not changing it)
+  }
+
+  wheat <- 1 - corn - soy - sor
+  if (any(c(corn, soy, sor, wheat) < 0) || any(c(corn, soy, sor, wheat) > 1))
+    return(c(PEN, PEN, PEN))
+  
+
+  # 0b) clamp irrigation knob per policy (hard repair)
+  theta_irrig <- enforce_irrigation_policy(theta_irrig_raw, policy, baseline_irrig_frac)
+
+  # 1) baseline LU for year Y
+  lu_y <- lu_baseline[lu_baseline$Year == Y, ]
+  if (nrow(lu_y) != 1L) return(c(PEN, PEN, PEN))  # <<< ensure length 3
+
+  LC_cult_base <- lu_y$LC_cult_base
+  LC_grass_base <- lu_y$LC_grass_base
+  LC_dev_base  <- lu_y$LC_dev_base
+  LC_total     <- lu_y$LC_total
+
+  # 2) cultivated vs grass (Developed fixed)
+  Cult_m2  <- LC_cult_base * (1 + dpp/100)
+  Cult_m2  <- max(0, min(Cult_m2, LC_total - LC_dev_base))   # no developed change!
+  Grass_m2 <- LC_total - LC_dev_base - Cult_m2
+
+  # 3) per-ha rows exist for this year (4 crops)
+  crops4 <- c("Corn","Soybeans","Sorghum","Wheat")
+  perha <- df_opt %>%
+    dplyr::filter(Year == Y, Crop %in% crops4) %>%
+    tidyr::complete(
+      Year = Y, Crop = crops4,
+      fill = list(
+        Yield_kgHa  = 0,
+        NetReturn_ha = 0,
+        Irrigation_m = 0
+        # old econ columns (price_per_kg, seed_cost_ha, fert_kgHa, etc.) no longer needed
+      )
+    )
+
+  shares <- c(Corn=corn, Soybeans=soy, Sorghum=sor, Wheat=wheat)
+
+  # --- NEW: split crop shares into irrigated vs rainfed to match theta_irrig ---
+  alloc <- allocate_irrigation(
+    crop_shares = shares,
+    theta_irrig = theta_irrig,
+    hist_mix    = hist_mix,
+    mode        = alloc_mode
+  )
+
+  area_irrig_m2 <- Cult_m2 * alloc$irrig
+  area_rain_m2  <- Cult_m2 * alloc$rainfed
+  area_irrig_ha <- area_irrig_m2 / 1e4
+  area_rain_ha  <- area_rain_m2  / 1e4
+
+  `%||%` <- function(a, b) if (is.null(a)) b else a
+
+  # 4) attach NEW cost table (income_per_kg, total_cost_per_kg, etc.)
+  perha <- perha %>%
+    dplyr::select(-dplyr::any_of(names(crop_params)[names(crop_params) != "Crop"])) %>%
+    dplyr::left_join(crop_params, by = "Crop")
+  # crop_params should now have:
+  #   income_per_kg, direct_cost_per_kg, fixed_cost_per_kg, total_cost_per_kg, net_return_per_kg
+
+  # --- Build two management slices: irrigated vs rainfed ---
+  perha_irrig <- perha %>%
+    dplyr::mutate(
+      area_m2           = as.numeric(area_irrig_m2[match(Crop, names(area_irrig_m2))]),
+      area_ha           = as.numeric(area_irrig_ha[match(Crop, names(area_irrig_ha))]),
+      Irrigation_m_eff  = Irrigation_m   # per-ha irrigation depth for irrigated slice
+    )
+
+  perha_rain <- perha %>%
+    dplyr::mutate(
+      area_m2           = as.numeric(area_rain_m2[match(Crop, names(area_rain_m2))]),
+      area_ha           = as.numeric(area_rain_ha[match(Crop, names(area_rain_ha))]),
+      Irrigation_m_eff  = 0              # rainfed slice: no applied irrigation
+    )
+
+  perha2 <- dplyr::bind_rows(
+    perha_irrig %>% dplyr::mutate(Management = "irrigated"),
+    perha_rain  %>% dplyr::mutate(Management = "rainfed")
+  )
+
+  # 5) per-crop totals using NEW econ structure
+  perha2 <- perha2 %>%
+    dplyr::mutate(
+      # Revenue: yield * income_per_kg * area
+      revenue_total    = income_per_kg     * Yield_kgHa * area_ha,
+
+      # Base costs (direct + fixed) per kg * yield * area
+      base_cost_total  = total_cost_per_kg * Yield_kgHa * area_ha,
+
+      # Irrigation cost: depth (m) * area (m2) * $/m3
+      irr_cost_total   = (Irrigation_m_eff * area_m2) * (universal_costs$irr_cost_per_m3 %||% 0)
+    )
+
+  # 6) keep for WQ accounting (fert kg still comes from df_opt / perha2 if present)
+  Fert_kg_total <- sum(perha2$fert_kgha * perha2$area_ha, na.rm = TRUE)
+  Irr_m3_total  <- sum(perha2$Irrigation_m_eff * perha2$area_m2, na.rm = TRUE)
+
+  # 7) basin totals ($/yr)
+  Revenue_total   <- sum(perha2$revenue_total,   na.rm = TRUE)
+  BaseCost_total  <- sum(perha2$base_cost_total, na.rm = TRUE)
+  Irr_totalCost   <- sum(perha2$irr_cost_total,  na.rm = TRUE)
+
+  # 8) land-use change cost (per ha of Δcult)
+  lu_cost <- lu_change_cost_per_ha * abs(Cult_m2 - LC_cult_base) / 1e4
+
+  # 9) net returns (TOTAL $/yr) with new econ
+  NR_total <- Revenue_total - (BaseCost_total + Irr_totalCost + lu_cost)
+
+  # 10) WQ prediction row
+  pred_row <- tibble::tibble(
+    Year = Y,
+    `LandCover_m2_all cult`      = Cult_m2,
+    LandCover_m2_grassPastureHay = Grass_m2,
+    LandCover_m2_developed       = LC_dev_base
+  ) %>%
+    dplyr::left_join(
+      wq_context %>%
+        dplyr::select(Year, Climate_precip_m, Climate_Tmean_C, precip_percentileChange) %>%
+        dplyr::distinct(Year, .keep_all = TRUE),
+      by = "Year"
+    ) %>%
+    dplyr::mutate(
+      Management_irrigation_m       = ifelse(Cult_m2 > 0, Irr_m3_total   / Cult_m2, 0),
+      Management_FertilizerUse_kgm2 = ifelse(Cult_m2 > 0, Fert_kg_total / Cult_m2, 0)
+    )
+
+  if (anyNA(pred_row)) return(c(PEN, PEN, PEN))
+
+  pred_log1p   <- as.numeric(predict(wq_model_log1p, newdata = pred_row))
+  nitrate_kgyr <- max(0, exp(pred_log1p) - 1)
+
+  c(nitrate_kgyr, -NR_total, Irr_m3_total)
+}
+
+
+```
+
+ - Aggregate across ALL years: mean N flux (kg/yr) and mean -profit ($/yr)
+```{r}
+eval_candidate_all_years <- function(
+  x,
+  years_vec,
+  df_opt,
+  wq_model_log1p,
+  wq_context,
+  lu_baseline,
+  universal_costs,
+  lu_change_cost_per_ha = 0,
+  weights = NULL,
+  na_penalty = 1e9,
+  baseline_irrig_frac = 0.48,
+  policy = NULL,
+  hist_mix = NULL,
+  alloc_mode = "preserve_hist_mix",
+  baseline_mode = TRUE      
+){
+  stopifnot(length(years_vec) > 0)
+
+  vals <- vapply(
+    years_vec,
+    \(Y) eval_candidate(
+      x, Y,
+      df_opt,
+      wq_model_log1p,
+      wq_context,
+      lu_baseline,
+      universal_costs,
+      lu_change_cost_per_ha = lu_change_cost_per_ha,
+      baseline_irrig_frac   = baseline_irrig_frac,
+      policy                = policy,
+      hist_mix              = hist_mix,
+      alloc_mode            = alloc_mode,
+      baseline_mode         = baseline_mode   # <<< pass through
+    ),
+    numeric(3)
+  )
+  vals <- t(vals)
+  colnames(vals) <- c("n_flux_kgyr", "neg_profit_usdyr", "irr_m3_yr")
+
+  if (is.null(weights)) weights <- rep(1, nrow(vals))
+  if (length(weights) != nrow(vals)) stop("weights must match length(years_vec).")
+
+  wmean <- function(v, w) {
+    keep <- is.finite(v) & is.finite(w) & w > 0
+    if (!any(keep)) return(NA_real_)
+    wk <- w[keep] / sum(w[keep])
+    sum(v[keep] * wk)
+  }
+
+  mean_n_flux    <- wmean(vals[, "n_flux_kgyr"],    weights)
+  mean_neg_prof  <- wmean(vals[, "neg_profit_usdyr"], weights)
+  mean_irr_m3_yr <- wmean(vals[, "irr_m3_yr"],     weights)
+
+  if (!is.finite(mean_n_flux) ||
+      !is.finite(mean_neg_prof) ||
+      !is.finite(mean_irr_m3_yr)) {
+    return(c(na_penalty, na_penalty, na_penalty))
+  }
+
+  c(mean_n_flux, mean_neg_prof, mean_irr_m3_yr)
+}
+
+```
+ 
+ - NSGA-II for the robust (mean) frontier
+  - this is where we need to change the optimization params!!!
+ 
+```{r}
+optimize_all_years_nsga2 <- function(
+  years_vec,
+  pop = 20, gens = 20, #opt parameters - can adjust this once I read more if I need
+  share_bounds = list(lb = c(Corn=0, Soybeans=0, Sorghum=0.1),   # per-crop share bounds
+                      ub = c(Corn=0.5, Soybeans=0.5, Sorghum=1)), #No crop capping - corn and soy will likely dominate change based on net returns
+  delta_bounds = c(0, 15), #+/- 5-15% of current land use - see if this is in line with actual trajectories, ignored if fixed_cult_area = TRUE
+  seed = 123, #reproduciblity 
+  lu_change_cost_per_ha = 0, #there probably is a cost... but idk...?
+ 
+  forbid_cult_expansion = FALSE,   # <-- turn this on for the NO EXP scenario, also change bounds!
+  fixed_cult_area = FALSE ,  # <-- turn this on for the NO CHANGE scenario, also change bounds!
+
+  
+  # NEW: irrigation scenario controls
+  baseline_irrig_frac = 0.48,                       # you said ~48% irrigated (52% rainfed)
+  policy = NULL,
+    #list(type="irrigation_floor", factor = 1.10),
+    #NULL,
+    #list(type = "rainfed_cap", factor = 0.90),  # e.g., cap at 90% of baseline
+  hist_mix = NULL,
+  alloc_mode = "preserve_hist_mix",
+  baseline_mode = TRUE
+  
+  
+
+){
+  stopifnot(length(years_vec) > 0)
+  set.seed(seed)  
+  
+  fn <- function(x) eval_candidate_all_years(
+    x, years_vec, df_opt, wq_model_log1p, wq_context, lu_baseline, universal_costs, 
+    lu_change_cost_per_ha = lu_change_cost_per_ha,
+    baseline_irrig_frac = baseline_irrig_frac,
+    policy = policy,
+    hist_mix = hist_mix,
+    alloc_mode = alloc_mode,
+    baseline_mode = baseline_mode
+  )
+  
+  # Decision vector now: [Corn, Soybeans, Sorghum, delta_cult_pp, theta_irrig_raw]
+  if (fixed_cult_area) {
+    lower <- c(share_bounds$lb, delta_cult_pp = 0, theta_irrig_raw = 0)
+    upper <- c(share_bounds$ub, delta_cult_pp = 0, theta_irrig_raw = 1)
+  } else {
+    lower <- c(share_bounds$lb, delta_cult_pp = delta_bounds[1], theta_irrig_raw = 0)
+    upper <- c(share_bounds$ub, delta_cult_pp = delta_bounds[2], theta_irrig_raw = 1)
+  }
+
+#  cons <- if (forbid_cult_expansion) {
+ #   function(x) c(
+ #     1 - x[1] - x[2] - x[3],  # Wheat = 1 - (corn+soy+sorghum) >= 0  -> g(x) >= 0
+#      - x[4]                    # delta_cult_pp <= 0
+ #   )
+#  } else {
+#    function(x) 1 - x[1] - x[2] - x[3]
+ # }
+  
+  
+  # Diversified constraints (mco::nsga2 requires g(x) >= 0):
+cons <- if (forbid_cult_expansion) {
+  function(x) {
+    corn <- x[1]; soy <- x[2]; sorg <- x[3]; dpp <- x[4]
+    wheat <- 1 - corn - soy - sorg
+    c(
+      wheat,   # Wheat >= 0
+      -dpp     # dpp <= 0  (only include this if you truly want to forbid expansion
+               # AND you've set delta_bounds to allow dpp <= 0, e.g. c(-15, 15))
+    )
+  }
+} else {
+  function(x) {
+    corn <- x[1]; soy <- x[2]; sorg <- x[3]
+    wheat <- 1 - corn - soy - sorg
+    wheat     # Wheat >= 0
+  }
+}
+
+cdim <- if (forbid_cult_expansion) 2L else 1L
+
+ # older constraint
+  #cons <- function(x){
+#    w <- 1 - x[1] - x[2] - x[3]
+ #   c(-w, w - 1)  # enforce 0<=wheat<=1
+ # }
+  
+  #10-29
+  #  cons <- function(x){
+  #  corn    <- x[1]
+  #  soy     <- x[2]
+  #  sorghum <- x[3]
+  #  wheat   <- 1 - corn - soy - sorghum
+
+   #   c(wheat)
+  
+    # constraint vector (10-28): each element must be <= 0 to be feasible
+#    c(
+ #     0.10 - wheat,   # wheat >= 0.10
+  #    wheat - 1       # wheat <= 1
+   #   # (you could also include wheat >= 0 if you wanted, but wheat>=0.10 already covers it)
+    #)
+
+  res <- nsga2(fn,
+               # before irr idim = 4, odim = 2,
+               idim = 5, odim = 3,
+               lower.bounds = lower, upper.bounds = upper,
+               popsize = pop, generations = gens,
+               constraints = cons,
+               cdim = if (forbid_cult_expansion) 2 else 1 
+               #also 2 for capped corn/soy and min wheat/sorg
+               )
+
+  out <- as.data.frame(res$par)
+  names(out) <- c("Corn","Soybeans","Sorghum","delta_cult_pp", "theta_irrig_raw")
+  #out$Wheat <- pmax(0.1, 1 - out$Corn - out$Soybeans - out$Sorghum)
+ # out$Wheat <- pmax(0, 1 - out$Corn - out$Soybeans - out$Sorghum)
+  out$Wheat <- 1 - out$Corn - out$Soybeans - out$Sorghum
+  out$Nitrate_obj <- res$value[,1]   # mean nitrate - min
+  out$NR_obj    <- -res$value[,2]  # mean $/ha - max
+  out$Irrig_m3_obj<- res$value[,3]   # ⬅ guaranteed present now
+  out
+}
+```
+ 
+ 
+ - runing alg & saving output
+```{r}
+years_all <- sort(unique(df_opt$Year))
+
+
+start_time <- Sys.time()
+robust_out <- optimize_all_years_nsga2(
+  years_all, pop = 20, gens = 20,
+  delta_bounds = c(0, 15), #ignored when fixed_cult_area = TRUE
+  seed = 42,
+  
+  forbid_cult_expansion = TRUE,
+  fixed_cult_area = TRUE,
+  baseline_irrig_frac = 0.48,
+ 
+  #raindfed expansion
+  policy = NULL,
+    #list(type="irrigation_floor", factor = 1.10),
+    #NULL, #list(type = "rainfed_cap", factor = 0.90),
+  
+  #  irr expansion
+  #policy = list(type = "irrigation_floor", factor = 1.10),
+
+  hist_mix = NULL,        # if you have it; else NULL
+  alloc_mode = "preserve_hist_mix",
+  baseline_mode = TRUE
+  
+)
+
+end_time <- Sys.time()
+
+execution_time <- end_time - start_time
+print(execution_time)
+
+timestamp <- format(Sys.time(), "%Y%m%d_%H%M")
+saveRDS(robust_out, file = paste0("robust_out_test_short", timestamp, ".rds"))
+
+```
+ 
+ 
+ - Frontier filter (on aggregated objectives)
+```{r}
+#robust_frontier <- robust_out %>%
+ # arrange(Nitrate_obj, desc(NRha_obj), ) %>%
+#  mutate(cum_best = cummax(NRha_obj)) %>%
+#  filter(NRha_obj >= cum_best) %>%
+ # select(-cum_best)
+
+
+pareto_nd <- function(df, cols, minimize, tol = 0) {
+  M <- as.matrix(df[, cols, drop = FALSE])
+  # Convert "maximize" to "minimize" by negating that column
+  for (k in seq_along(cols)) if (!minimize[k]) M[, k] <- -M[, k]
+  n <- nrow(M); keep <- rep(TRUE, n)
+  for (i in seq_len(n)) {
+    if (!keep[i]) next
+    # j dominates i if j is <= i in all cols (with tol) and < in at least one
+    less_equal_all <- sweep(M, 2, M[i, ], `<=`) | abs(sweep(M, 2, M[i, ], `-`)) <= tol
+    strictly_less  <- sweep(M, 2, M[i, ], `<`)  & !abs(sweep(M, 2, M[i, ], `-`)) <= tol
+    dominates_i <- apply(less_equal_all, 1, all) & apply(strictly_less, 1, any)
+    dominates_i[i] <- FALSE
+    if (any(dominates_i)) keep[i] <- FALSE
+  }
+  keep
+}
+
+cols3     <- c("Nitrate_obj", "NRha_obj", "Irrig_m3_obj")
+minimize3 <- c(TRUE, FALSE, TRUE)  # min N, max $, min Irr
+keep <- pareto_nd(robust_out, cols3, minimize3, tol = 0)
+
+robust_frontier <- robust_out[keep, ] %>%
+  arrange(Nitrate_obj, desc(NRha_obj), Irrig_m3_obj)
+
+#saveRDS(robust_frontier, file = paste0("robust_out_frontier_diversified_short", timestamp, ".rds"))
+
+```
+ 
+ 
+ 
+ - viz
+```{r}
+ggplot(robust_out, aes(x = Nitrate_obj, y = NRha_obj, color = Irrig_m3_obj)) +
+  geom_point(size = 3, alpha = 0.8) +
+  scale_color_viridis_c(direction = -1, option = "plasma", trans = "log10") +
+  theme_test(base_size = 14) +
+  labs(
+    x = "Nitrate flux (kg/yr, ↓ better)",
+    y = "Net Return ($/yr, ↑ better)",
+    color = "Irrigation (m³/yr, ↓ better)",
+    title = "Diverse: Nitrate vs Profit (colored by irrigation)"
+  ) + theme(plot.title.position = "plot")
+
+library(plotly)
+
+# Make an interactive 3D scatter
+plot_ly(
+  data = robust_out,
+  x = ~Nitrate_obj,  # minimize
+  y = ~NRha_obj,   # maximize
+  z = ~Irrig_m3_obj,    # minimize
+  color = ~Corn,
+  colors = viridisLite::viridis(100),
+  type = "scatter3d",
+  mode = "markers",
+  marker = list(size = 4, opacity = 0.7)
+) %>%
+  layout(
+    scene = list(
+      xaxis = list(title = "Nitrate (scaled, ↓ better)"),
+      yaxis = list(title = "Net Return (scaled, ↑ better)"),
+      zaxis = list(title = "Irrigation Use (scaled, ↓ better)")
+    ),
+    title = "3D Pareto Front: Nitrate vs Profit vs Irrigation"
+  )
+
+
+#install.packages("scatterplot3d")
+library(scatterplot3d)
+
+scatterplot3d(
+  x = robust_out$Nitrate_obj,
+  y = robust_out$NRha_obj,
+  z = robust_out$Irrig_m3_obj,
+  color = "darkblue",
+  pch = 19,
+  main = "3D Pareto Front (scaled values)",
+  xlab = "Nitrate (↓)",
+  ylab = "Profit (↑)",
+  zlab = "Irrigation (↓)"
+)
+
+
+
+
+```
+ 
+ 
+ 
+ 
+ 

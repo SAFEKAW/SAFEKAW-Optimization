@@ -24,9 +24,6 @@ df_int_crop_areanorm <-  read_csv(here(file.path("data","int_crop_areanorm_annua
 df_int_basin <-  read_csv(here(file.path("data","int_basin_annual.csv"))   )
 
 
-yrs_common <- 2006:2023
-
-
 ```
 
  - color palettes
@@ -83,7 +80,7 @@ crop_params <- tribble(
   )
 
 
-mix_crops <- c("Corn","Soybeans","Sorghum","Wheat")
+#mix_crops <- c("Corn","Soybeans","Sorghum","Wheat")
 
 df_opt <- df_int_crop_areanorm %>%
   left_join(crop_params, by = "Crop")
@@ -92,38 +89,83 @@ df_opt <- df_int_crop_areanorm %>%
 
 ```
 
- - getting hist land use fracs
 ```{r}
-hist_crop_frac <- df_int_crop_areanorm %>%
-  #filter(Crop %in% crop_params) %>%
+# ---- 0) Basic settings ------------------------------------------------------
+years_curr <- 2006:2023
+crops4     <- c("Corn","Soybeans","Sorghum","Wheat")
+
+# Helper to get area in m2 from either m2 or ha column
+get_area_m2 <- function(df, area_m2_col = "Crop_area_m2", area_ha_col = "Crop_area_ha") {
+  df %>%
+    mutate(
+      area_m2 = dplyr::case_when(
+        area_m2_col %in% names(.) ~ .data[[area_m2_col]],
+        area_ha_col %in% names(.) ~ .data[[area_ha_col]] * 1e4,
+        TRUE                      ~ NA_real_
+      )
+    )
+}
+
+# ---- 1) Land-use history from df_int_crop_areanorm --------------------------
+# One unified object with area_m2 for all crops/years we care about
+lu_hist <- df_int_crop_areanorm %>%
+  filter(Crop %in% crops4) %>%
+  get_area_m2() %>%
+  drop_na(area_m2)
+
+# (a) Historical min / max crop fractions over all years (for wide bounds)
+hist_crop_frac <- lu_hist %>%
   group_by(Year, Crop) %>%
-  summarise(
-    area_m2 = if ("Crop_area_m2" %in% names(.)) sum(Crop_area_m2, na.rm = TRUE)
-              else if ("Crop_area_ha" %in% names(.)) sum(Crop_area_ha, na.rm = TRUE) * 1e4
-              else NA_real_,
-    .groups = "drop"
-  ) %>%
+  summarise(area_m2 = sum(area_m2, na.rm = TRUE), .groups = "drop") %>%
   group_by(Year) %>%
   mutate(frac = area_m2 / sum(area_m2, na.rm = TRUE)) %>%
   ungroup() %>%
   group_by(Crop) %>%
   summarise(
     ymin = min(frac, na.rm = TRUE),
-   # ymed = median(frac, na.rm = TRUE),
     ymax = max(frac, na.rm = TRUE),
     .groups = "drop"
   )
 
-# Split out the bands for convenience
-crop_min <- hist_crop_frac |>
-  dplyr::select(Crop, ymin) |>
-  tibble::deframe()
+crop_min <- hist_crop_frac %>%
+  select(Crop, ymin) %>%
+  deframe()
 
-crop_max <- hist_crop_frac |>
-  dplyr::select(Crop, ymax) |>
-  tibble::deframe()
+crop_max <- hist_crop_frac %>%
+  select(Crop, ymax) %>%
+  deframe()
+
+# (b) Current-period mean crop mix (for obs_x and "local" mode)
+obs_mix <- lu_hist %>%
+  filter(Year %in% years_curr) %>%
+  group_by(Crop) %>%
+  summarise(area_m2 = sum(area_m2, na.rm = TRUE), .groups = "drop") %>%
+  mutate(share = area_m2 / sum(area_m2, na.rm = TRUE))
+
+obs_mix
+
+# Decision vector x = (Corn, Soy, Sorghum); Wheat implied
+obs_x <- obs_mix %>%
+  filter(Crop %in% c("Corn","Soybeans","Sorghum")) %>%
+  mutate(Crop = factor(Crop, levels = c("Corn","Soybeans","Sorghum"))) %>%
+  arrange(Crop) %>%
+  pull(share)
+
+obs_x <- setNames(obs_x, c("Corn","Soybeans","Sorghum"))
+obs_x
+# implied_wheat <- 1 - sum(obs_x)
+
+# ---- 2) Historical irrigation fractions per crop from df_opt ----------------
+hist_mix <- tibble::tibble(
+  Crop = crops4,
+  # rough guess: corn most irrigated, then sorghum, then soy, then wheat
+  irrig_frac = c(0.4, 0.55, 0.1, 0.1)
+)
+hist_mix
+
 ```
- 
+
+
 
  - run wq model - same here
 ```{r}
@@ -131,7 +173,7 @@ df_nitrate <- read_csv(here(file.path("data","RiverNitrateData_EKSRB.csv")), sho
 
 df_basin_input_forWQ <- df_basin_input_forWQ %>%
   left_join(df_nitrate, by = "Year") %>%
-  subset(Year %in% yrs_common)
+  subset(Year %in% years_curr)
 
 # Percentile change as in training
 ec <- ecdf(df_basin_input_forWQ$Climate_precip_m)
@@ -176,16 +218,15 @@ lu_baseline <- df_basin_input_forWQ %>%
 
 ```
 
- - IDK if this is needed
+ - Allocate irrigated vs rainfed shares by crop
 ```{r}
-# Allocate irrigated vs rainfed shares by crop
 # crop_shares: named numeric vector (e.g. c(Corn=0.4, Soybeans=0.3, Sorghum=0.2, Wheat=0.1))
 # theta_irrig: scalar in [0,1], overall irrigated fraction of cultivated area
 # hist_mix: optional tibble/data.frame with columns: Crop, irrig_frac (historical irrig share per crop)
 # mode: "preserve_hist_mix" or "uniform_by_crop"
 allocate_irrigation <- function(crop_shares,
                                 theta_irrig,
-                                hist_mix = NULL,
+                                hist_mix = hist_mix,
                                 mode = c("preserve_hist_mix", "uniform_by_crop")) {
   mode <- match.arg(mode)
   crop_shares <- crop_shares[!is.na(crop_shares)]
@@ -249,6 +290,8 @@ eval_candidate <- function(
   `%||%` <- function(a, b) if (is.null(a)) b else a
   
   # ---- 0) decision vector -> crop shares (+ leftover wheat) ---------
+  x <- unname(x)  # <-- DROP any names from obs_x or other inputs
+
   corn <- x[1]; soy <- x[2]; sor <- x[3]
   wheat <- 1 - corn - soy - sor
   
@@ -293,7 +336,7 @@ eval_candidate <- function(
     crop_shares = shares,
     theta_irrig = baseline_irrig_frac,
     hist_mix    = hist_mix,           # NULL is fine for baseline
-    mode        = "uniform_by_crop"   # i.e., same irrig fraction for all crops
+    mode        = "preserve_hist_mix"   # i.e., same irrig fraction for all crops
   )
   
   area_irrig_m2 <- Cult_m2 * alloc$irrig
@@ -306,7 +349,7 @@ eval_candidate <- function(
     dplyr::mutate(
       area_m2 = as.numeric(area_irrig_m2[match(Crop, names(area_irrig_m2))]),
       area_ha = as.numeric(area_irrig_ha[match(Crop, names(area_irrig_ha))]),
-      # 👉 use climate/model-based depth per ha from df_opt
+      # use climate/model-based depth per ha from df_opt
       Irrigation_m_eff = Irrigation_m
     )
   
@@ -343,6 +386,7 @@ eval_candidate <- function(
   # No land-use change cost in this baseline mode
   NR_total <- Revenue_total - (BaseCost_total + Irr_totalCost)
   
+  
   # ---- 6) WQ prediction row ----------------------------------------
   pred_row <- tibble::tibble(
     Year = Y,
@@ -365,6 +409,7 @@ eval_candidate <- function(
   
   pred_log1p   <- as.numeric(predict(wq_model_log1p, newdata = pred_row))
   nitrate_kgyr <- max(0, exp(pred_log1p) - 1)
+
   
   c(nitrate_kgyr, -NR_total, Irr_m3_total)
 }
@@ -434,6 +479,7 @@ eval_candidate_all_years <- function(
 
 ```
  
+ 
  - NSGA-II for the robust (mean) frontier
 
 ```{r}
@@ -442,53 +488,91 @@ optimize_all_years_nsga2 <- function(
   pop  = 20,
   gens = 20,
   baseline_irrig_frac = 0.48,   # fixed historical irrigated fraction
-  seed = 123
+  seed = 123, 
+  mode = c("exploratory", "current_local"),
+  obs_x = NULL,        # only needed for current_local
+  local_delta = 0.02   # +/- 15 percentage points around observed shares
+
 ){
   stopifnot(length(years_vec) > 0)
   set.seed(seed)
+  mode <- match.arg(mode)
+
 
   # Objective wrapper: calls your simplified eval_candidate_all_years
   fn <- function(x) {
     eval_candidate_all_years(
-      x              = x,
-      years_vec      = years_vec,
-      df_opt         = df_opt,
-      wq_model_log1p = wq_model_log1p,
-      wq_context     = wq_context,
-      lu_baseline    = lu_baseline,
-      universal_costs = universal_costs,
-      crop_params    = crop_params,
+      x                   = x,
+      years_vec           = years_vec,
+      df_opt              = df_opt,
+      wq_model_log1p      = wq_model_log1p,
+      wq_context          = wq_context,
+      lu_baseline         = lu_baseline,
+      universal_costs     = universal_costs,
+      crop_params         = crop_params,
       baseline_irrig_frac = baseline_irrig_frac,
-            hist_mix       = NULL
+      hist_mix            = hist_mix
     )
   }
 
-  # Decision vector is now only 3D: [Corn, Soybeans, Sorghum]
-  # Bounds taken from historical ymin/ymax
-  lower <- c(
-    Corn     = crop_min["Corn"],
-    Soybeans = crop_min["Soybeans"],
-    Sorghum  = crop_min["Sorghum"]
-  )
+  if (mode == "exploratory") {
+    #  original wide bounds using historical min/max
+    lower <- c(
+      Corn     = crop_min["Corn"],
+      Soybeans = crop_min["Soybeans"],
+      Sorghum  = crop_min["Sorghum"]
+    )
 
-  upper <- c(
-    Corn     = crop_max["Corn"],
-    Soybeans = crop_max["Soybeans"],
-    Sorghum  = crop_max["Sorghum"]
-  )
+    upper <- c(
+      Corn     = crop_max["Corn"],
+      Soybeans = crop_max["Soybeans"],
+      Sorghum  = crop_max["Sorghum"]
+    )
 
+  } else if (mode == "current_local") {
+
+    if (is.null(obs_x)) {
+      stop("For mode = 'current_local', please provide obs_x (observed crop shares).")
+    }
+
+    # ensure correct order and drop any names weirdness
+    x0 <- unname(obs_x[c("Corn","Soybeans","Sorghum")])
+
+    # symmetric +/- local_delta around observed shares
+    lower_raw <- pmax(0, x0 - local_delta)
+    upper_raw <- pmin(1, x0 + local_delta)
+
+    # still respect global historical min/max
+    lower_hist <- crop_min[c("Corn","Soybeans","Sorghum")]
+    upper_hist <- crop_max[c("Corn","Soybeans","Sorghum")]
+
+    lower <- pmax(lower_raw, lower_hist)
+    upper <- pmin(upper_raw, upper_hist)
+
+    names(lower) <- c("Corn","Soybeans","Sorghum")
+    names(upper) <- c("Corn","Soybeans","Sorghum")
+
+    if (any(lower > upper)) {
+      stop("Inconsistent bounds in current_local mode: some lower > upper. ",
+           "Try reducing local_delta or checking crop_min/crop_max.")
+    }
+
+    message("Current-local bounds (Corn, Soybeans, Sorghum):")
+    print(rbind(lower = lower, upper = upper))
+  }
+  
 # Constraints: keep all four crops within their historical ranges
   # Wheat is implied: Wheat = 1 - (Corn + Soybeans + Sorghum)
-  cons <- function(x) {
+   cons <- function(x) {
     corn <- x[1]
-    sorg  <- x[2]
-    soy <- x[3]
+    soy  <- x[2]      # CHANGED
+    sorg <- x[3]      # CHANGED
     wheat <- 1 - corn - soy - sorg
 
     c(
       # Corn within [min, max]
-      corn  - crop_min["Corn"],      # >= 0  => corn >= min
-      crop_max["Corn"]     - corn,   # >= 0  => corn <= max
+      corn  - crop_min["Corn"],
+      crop_max["Corn"]     - corn,
 
       # Soy within [min, max]
       soy   - crop_min["Soybeans"],
@@ -504,7 +588,7 @@ optimize_all_years_nsga2 <- function(
     )
   }
 
-
+#run alg
   res <- mco::nsga2(
     fn,
     idim         = 3,   # 3 decision variables
@@ -522,7 +606,7 @@ optimize_all_years_nsga2 <- function(
   out$Wheat  <- 1 - out$Corn - out$Soybeans - out$Sorghum
 
   out$Nitrate_obj  <- res$value[, 1]   # mean nitrate (kg/yr) – minimize
-  out$NR_obj       <- -res$value[, 2]  # mean net returns ($/yr) – maximize
+  out$NR_obj      <- -res$value[, 2]  # mean net returns ($/yr) – maximize
   out$Irrig_m3_obj <- res$value[, 3]   # mean irrigation volume (m3/yr) – minimize
 
   out
@@ -539,8 +623,10 @@ start_time <- Sys.time()
 robust_out <- optimize_all_years_nsga2(
   years_all, pop = 20, gens = 20,
   seed = 42,
-  baseline_irrig_frac = 0.48   # or your historical fraction
-
+  baseline_irrig_frac = 0.48,   # or your historical fraction
+  mode                = "current_local",
+  obs_x               = obs_x,
+  local_delta         = 0.02
 )
 
 end_time <- Sys.time()
@@ -592,11 +678,72 @@ robust_frontier <- robust_out[keep, ] %>%
 ```
  
  
+ - historical point v opt points
+```{r}
+obs_vals <- eval_candidate_all_years(
+  x                   = obs_x,
+  years_vec           = years_curr,
+  df_opt              = df_opt,
+  wq_model_log1p      = wq_model_log1p,
+  wq_context          = wq_context,
+  lu_baseline         = lu_baseline,
+  universal_costs     = universal_costs,
+  crop_params         = crop_params,
+  baseline_irrig_frac = 0.48,  # 0.48
+  hist_mix            = hist_mix
+)
+
+obs_vals
+
+obs_point <- tibble(
+  Nitrate_obj   = obs_vals[1],        # same name as in robust_out
+  NR_obj        = -obs_vals[2],       # flip sign: profit (higher is better)
+  Irrig_m3_obj  = obs_vals[3],
+  type          = "Observed"
+)
+obs_point
+obs_point <- as.data.frame(obs_point)
+
+
+
+hist_obs_point <- df_int_basin %>%
+  filter(Year %in% years_curr) %>%
+  summarise(
+    Nitrate_obj   = mean(NitrateFluxPredicted_kg, na.rm = TRUE),
+    NR_obj        = mean(NetReturn_total_usd,   na.rm = TRUE),
+    Irrig_m3_obj  = mean(Irrigation_total_m3,   na.rm = TRUE)
+  ) %>%
+  mutate(type = "Observed (hist)")
+
+hist_obs_point <- as.data.frame(hist_obs_point)
+
+#will have to rearrange, just seeing if it works for now
+N_scale  <- hist_obs_point[1]  / obs_point[1]
+NR_scale  <- hist_obs_point[2]  / obs_point[2]
+Irr_scale <- hist_obs_point[3] / obs_point[3]
+
+
+robust_out_curr_local <- robust_out %>%
+  dplyr::mutate(type = "Optimized (local)") %>%
+   mutate(
+    Nitrate_obj   = as.numeric(Nitrate_obj)  * as.numeric(N_scale),
+    NR_obj        = as.numeric(NR_obj)     * as.numeric(NR_scale),
+    Irrig_m3_obj  = as.numeric(Irrig_m3_obj) * as.numeric(Irr_scale)
+  ) %>%
+  dplyr::bind_rows(hist_obs_point) %>%
+  dplyr::bind_rows(obs_point %>% dplyr::mutate(
+    Nitrate_obj   = as.numeric(Nitrate_obj)  * as.numeric(N_scale),
+    NR_obj        = as.numeric(NR_obj)     * as.numeric(NR_scale),
+    Irrig_m3_obj  = as.numeric(Irrig_m3_obj) * as.numeric(Irr_scale),
+    type = "Observed (eval)"))
+
+```
+ 
  
  - viz
 ```{r}
-ggplot(robust_out, aes(x = Nitrate_obj, y = NR_obj, color = Irrig_m3_obj)) +
-  geom_point(size = 3.5, alpha = 0.8) +
+ggplot(robust_out_curr_local, aes(x = Nitrate_obj, y = NR_obj, color = Irrig_m3_obj)) +
+  geom_point(aes(shape = type), size = 3.5, alpha = 0.8) +
   scale_color_viridis_c(direction = -1,  trans = "log10") +
   theme_test(base_size = 14) +
   labs(
@@ -606,8 +753,8 @@ ggplot(robust_out, aes(x = Nitrate_obj, y = NR_obj, color = Irrig_m3_obj)) +
     title = "Baseline: Nitrate vs Profit (colored by irrigation)"
   ) + theme(plot.title.position = "plot")
 
-library(plotly)
 
+library(plotly)
 # Make an interactive 3D scatter
 plot_ly(
   data = robust_out,
@@ -630,24 +777,51 @@ plot_ly(
   )
 
 
-#install.packages("scatterplot3d")
-library(scatterplot3d)
+#install.packages('ggtern', repos = c('https://nicholasehamilton.r-universe.dev', 'https://cloud.r-project.org'))
 
-scatterplot3d(
-  x = robust_out$Nitrate_obj,
-  y = robust_out$NR_obj,
-  z = robust_out$Irrig_m3_obj,
-  color = "darkblue",
-  pch = 19,
-  main = "3D Pareto Front (scaled values)",
-  xlab = "Nitrate (↓)",
-  ylab = "Profit (↑)",
-  zlab = "Irrigation (↓)"
-)
+library(ggtern)
 
+tern_df <- robust_out_curr_local %>%
+  group_by(type) %>%
+  mutate(
+    NR_scaled  = (NR_obj        - min(NR_obj,        na.rm = TRUE)) /
+                 (max(NR_obj,   na.rm = TRUE) - min(NR_obj, na.rm = TRUE) + 1e-9),
+    N_scaled   = (max(Nitrate_obj, na.rm = TRUE) - Nitrate_obj) /
+                 (max(Nitrate_obj, na.rm = TRUE) - min(Nitrate_obj, na.rm = TRUE) + 1e-9),
+    Irr_scaled = (max(Irrig_m3_obj, na.rm = TRUE) - Irrig_m3_obj) /
+                 (max(Irrig_m3_obj, na.rm = TRUE) - min(Irrig_m3_obj, na.rm = TRUE) + 1e-9)
+  ) %>%
+  mutate(
+    total      = NR_scaled + N_scaled + Irr_scaled + 1e-12,
+    econ_comp  = NR_scaled  / total,   # net returns
+    wq_comp    = N_scaled   / total,   # water quality (low nitrate)
+    water_comp = Irr_scaled / total    # water quantity (low irrigation)
+  )
+
+
+ggtern(
+  data = tern_df,
+  aes(x = econ_comp, y = wq_comp, z = water_comp)
+) +
+  geom_point(data = subset(tern_df, type == "Optimized (local)"), #
+             alpha = 0.6, size = 1.8) +
+  geom_point(data = subset(tern_df, type == "Observed (eval)"),
+             size = 3.5, shape = 21, fill = "white", stroke = 1) +
+  geom_point(data = subset(tern_df, type == "Observed (hist)"),
+             size = 3.5, shape = 20, fill = "white", stroke = 1) +
+  labs(
+    L = "Net returns\n(economics)",
+    T = "Water quality\n(low N)",
+    R = "Water quantity\n(low irr.)",
+    title = "Observed system (df_opt) vs optimized frontier"
+  ) +
+  theme_bw() +
+  theme_showarrows()
 
 ```
- 
+
+
+
  # diagnositc tables
 ```{r}
 robust_out %>%
@@ -683,12 +857,6 @@ percrop_summary <- df_opt %>%
 percrop_summary
 
 
-df_opt %>%
-  group_by(Crop) %>%
-  summarise(
-    mean_Irr_m_dfopt = mean(Irrigation_m, na.rm = TRUE)
-  ) %>%
-  left_join(crop_params %>% select(Crop, irr_depth_m), by = "Crop")
 
 ```
  
