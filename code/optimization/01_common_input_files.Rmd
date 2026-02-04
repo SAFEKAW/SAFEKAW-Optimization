@@ -1,0 +1,275 @@
+---
+title: "01_Common_input_file"
+author: "BRW"
+date: "2025-08-15"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Common inputs for SAFEKAW submodels
+- Goal of this file is to get input variables for submodels (components) all into consistent spatial scale (basin) and units (metric)
+
+- focus models so far are 1) Crop model, 2) SW quality model and 3) net returns (economic model starter)
+- These both require (for now) inputs from:
+    - Climate (precip.; mm)
+        - crop is total ppt each year (summed)
+        - SW model is basin average per year
+        
+    - Land use (ha)
+        - SW quality has all land use, with cultivated lumped
+        - crop only has corn, soybean, wheat and sorghum
+        
+    - Irrigation (mm for crop and water quality; m3/ha for net returns)
+      - irrigation has to be a fx of land use and climate in order to change model outputs under different scenarios (opt and climate) (mm/area land use - models don't need to be this, but need to be able to normalize by land use area for each crop)
+      
+    - Fertilizer - needs to be improved...
+      - Right now just averages for rainfed and irrigated (kg & kg/area land use - models don't need to be this, but need to be able to normalize by land use area for each crop)
+    
+    
+```{r}
+library(here)
+#workspace
+source(here("code", "paths+packages.R"))
+
+```
+    
+  
+## Climate
+ - Two submodels have different climate data sources
+ - Crop model is annual and for each county, while water quality is monthly averages over entire basin 
+ - Using county data, but cannot calculate SPEI in SW quality model if I do this (I can, it'll just be more pieces to move and optimize...)
+
+```{r}
+yrs_common <- 1990:2023
+
+# County-level climate data
+df_climate_county <- read_csv(here("data", "ClimateData_County.csv")) |>
+  filter(Year %in% yrs_common) |>
+  mutate(
+    FIPS = as.character(FIPS),
+    spatial_scale = "county",
+    source = "Crop input"
+  ) |>
+  group_by(Year, FIPS, spatial_scale) |>
+  summarise(
+    precip_m      = sum(precip_mm_gridmet)/1000,     # annual depth (m)
+    precip_m_avg  = mean(precip_mm_gridmet)/1000,    # mean depth (m) — do we want area weighted or no?
+    tmin_C_avg    = mean(tmmn_C_gridmet),
+    tmax_C_avg    = mean(tmmx_C_gridmet),
+    .groups = "drop"
+  )
+# NOTE: area-weight to basin scale in later step
+
+```
+ 
+ - need to check that the counties are clipped to watershed boundary!!! don't think they are...
+
+## Land use
+  - Similar to above
+```{r}
+#crop
+df_landcover_county <- read_csv(here("data", "LandCoverData-CDL_County.csv")) |>
+  mutate(
+    area_m2 = area_ha * 10000,   
+    FIPS = as.character(FIPS),
+    spatial_scale = "county",
+    source = "Crop input"
+  ) |>
+  dplyr::select(Year, FIPS, spatial_scale, LandCover, area_m2, area_ha, area_prc)
+
+landCoverGroups <- tibble::tibble(
+  LandCover = c("Developed","Grass/Pasture/Shrubland",
+                "Corn","Double Crop","Other Crops","Sorghum","Soybeans","Wheat"),
+  LandCoverGroup = c("developed","grassPastureHay", rep("all cult", 6))
+)
+
+df_landcover_all_class <- df_landcover_county |>
+  left_join(landCoverGroups, by = "LandCover") |>
+  drop_na(LandCoverGroup) |>
+  mutate(
+    Crop = case_when(
+      LandCover %in% c("Corn","Sorghum","Soybeans","Wheat") ~ LandCover,
+      TRUE ~ NA_character_
+    )
+  )
+
+```
+   - likely need to add in the NLCD early years (1990~2005) from Shreya's model 
+   - Crop model needs to subset to Landcover within model wrapper
+   
+   
+## Irrigated water use
+  - three potential data sources: WaterUseData_County.csv (crop model), WaterUseData_EKSRB.csv (sw qualtiy model), 
+  intermediate between the two (WaterUseByCrop_EKSRB.csv)
+  - using county data, leaving irr as mm for both crop and SW quality models
+```{r}
+#by crop
+df_irrigation_in <- read_csv(here("data", "WaterUseData_County.csv")) |>
+  filter(Year %in% yrs_common, n_pdiv > 3) |>
+  mutate(
+    irrigation_WaterUse_m = irrigation_mm_mean/1000,   # depth (m)
+    FIPS = as.character(FIPS),
+    spatial_scale = "county",
+    source = "Crop input",
+    LandCoverGroup = "all cult"     # align with WQ grouping
+  ) |>
+  dplyr::select(Year, FIPS, spatial_scale, Crop, LandCoverGroup,
+                irrigation_WaterUse_m, n_pdiv)
+
+```
+
+## Fertilizer 
+  - right now just using constant, avg of rainfed and irr
+  - How specific do we want to be? County and over time by crop (TREND + excel file?)?? 
+  - This ^^ could be a later thing, we would have to make assumptions for future scenarios though... 
+```{r}
+df_landCoverFertilizer_county <- df_landcover_county |>
+  filter(LandCover %in% c("Corn","Sorghum","Soybeans","Wheat")) |>
+  mutate(
+    fertilizer_kgHa = dplyr::case_when(
+      LandCover == "Corn"     ~ 250,
+      LandCover == "Sorghum"  ~ 112,
+      LandCover == "Soybeans" ~ 56,
+      LandCover == "Wheat"    ~ 89,
+      TRUE ~ NA_real_
+    ),
+    fertilizer_kgCrop = fertilizer_kgHa * area_ha,     # historical total (kg)
+    spatial_scale = "county",
+    FIPS = as.character(FIPS),
+    source = "csv"
+  ) |>
+  rename(Crop = LandCover) |>
+  dplyr::select(Year, FIPS, spatial_scale, Crop, fertilizer_kgHa, fertilizer_kgCrop)
+ #fertilizer_kgHa - this has to go through too!! bc land use will change!!
+
+
+```
+
+- update: GDDs
+```{r}
+df_gdd <- read_csv(here("data", "gdd_all_gs.csv")) %>%
+  filter(Year %in% yrs_common) |>
+  mutate(
+    FIPS = as.character(FIPS),
+    spatial_scale = "county",
+    Crop = crop
+  ) %>%
+  dplyr::select(Year, FIPS, spatial_scale, Crop, GDD)
+```
+
+
+## Joining all input datasets
+```{r}
+df_combined <- df_landcover_all_class |>
+  left_join(df_irrigation_in,
+                   by = c("Year","FIPS","spatial_scale","LandCoverGroup","Crop")) |>
+  left_join(df_landCoverFertilizer_county,
+                   by = c("Year","FIPS","spatial_scale","Crop")) |>
+  left_join(df_gdd,
+                   by = c("Year","FIPS","spatial_scale","Crop")) |>
+  left_join(df_climate_county,
+                   by = c("Year","FIPS","spatial_scale"))
+
+unique(df_combined$Year)
+
+```
+
+
+- basin scale agg
+```{r}
+#using this for now - but need to actually get area of each county within the watershed boundaries!
+df_county_areas <- df_landcover_county %>%
+  group_by(FIPS) %>%
+  summarise(area_m2 = sum(area_m2, na.rm = TRUE),
+            .groups = "drop")
+
+
+# Basin climate (area-weighted means of county *sum(LU)* depths/temps)
+df_climate_basin <- df_climate_county |>
+  left_join(df_county_areas, by = "FIPS") |>
+  group_by(Year) |>
+  summarise(
+    Climate_precip_m = weighted.mean(precip_m, w = area_m2, na.rm = TRUE),
+    Climate_Tmin_C   = weighted.mean(tmin_C_avg, w = area_m2, na.rm = TRUE),
+    Climate_Tmax_C   = weighted.mean(tmax_C_avg, w = area_m2, na.rm = TRUE),
+    .groups = "drop"
+  ) |>
+  mutate(Climate_Tmean_C = (Climate_Tmin_C + Climate_Tmax_C)/2)
+
+# Basin irrigation depth - crop specific -area-weighted mean depth
+cult_area_by_county_crop <- df_landcover_county %>%
+  filter(LandCover %in% c("Corn","Soybeans")) %>%
+  transmute(Year, FIPS, Crop = LandCover, area_m2)
+
+
+df_irr_basin <- cult_area_by_county_crop %>%
+  left_join(
+    df_irrigation_in %>%
+      filter(Crop %in% c("Corn","Soybeans")) %>%
+      select(Year, FIPS, Crop, irrigation_WaterUse_m),
+    by = c("Year","FIPS","Crop")
+  ) %>%
+  mutate(irrigation_WaterUse_m = coalesce(irrigation_WaterUse_m, 0)) %>%
+  group_by(Year) %>%
+  summarise(
+    # basin-average depth over corn+soy area
+    Management_irrigation_m = weighted.mean(irrigation_WaterUse_m, w = area_m2, na.rm = TRUE),
+    # also useful to keep:
+    Irrigation_total_m3 = sum(irrigation_WaterUse_m * area_m2, na.rm = TRUE),
+    IrrigArea_m2 = sum(area_m2, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+# Basin fertilizer total (kg) using per-ha RATES × county crop areas (historical baseline)
+fert_rate_tbl <- tibble(
+  Crop = c("Corn","Sorghum","Soybeans","Wheat"),
+  fert_kgHa = c(250, 112, 56, 89)
+)
+
+df_fert_basin <- df_landcover_county |>
+  filter(LandCover %in% fert_rate_tbl$Crop) |>
+  rename(Crop = LandCover) |>
+  left_join(fert_rate_tbl, by = "Crop") |>
+  group_by(Year) |>
+  summarise(
+    Management_FertilizerUse_kg = sum(fert_kgHa * area_ha, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Optionally bring LandCover_m2_* groups for WQ
+df_landcover_basin_groups <- df_landcover_all_class |>
+  group_by(Year, LandCoverGroup) |>
+  summarise(group_area_m2 = sum(area_m2, na.rm = TRUE), .groups = "drop") |>
+  pivot_wider(names_from = LandCoverGroup, values_from = group_area_m2,
+                     names_prefix = "LandCover_m2_")
+
+# Assemble basin common input
+common_input_basin <- df_climate_basin |>
+  left_join(df_irr_basin,  by = "Year") |>
+  left_join(df_fert_basin, by = "Year") |>
+  left_join(df_landcover_basin_groups, by = "Year") |>
+  mutate(spatial_scale = "basin", source = "assembled") |>
+  arrange(Year)
+
+# Quick sanity
+stopifnot(all(c("Year","Climate_precip_m","Climate_Tmean_C",
+                "Management_irrigation_m","Management_FertilizerUse_kg") %in% names(common_input_basin)))
+
+```
+
+
+
+ - save files 
+```{r}
+write_csv(df_combined,   here("data", "common_inputs_county.csv"))
+write_csv(common_input_basin,  here("data","common_inputs_basin.csv"))
+write_csv(df_county_areas,    here("data", "county_areas.csv"))
+
+```
+

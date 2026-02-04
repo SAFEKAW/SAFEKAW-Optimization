@@ -1,0 +1,141 @@
+---
+title: "Gridmet data"
+date: 1-23-2026
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+The purpose of this file is to access gridmet data from 2006-2024 for the EKSRB/counties to be used in GDD calcs for submodel inputs
+
+
+- paths/packages
+```{r}
+library(here)
+#remotes::install_github("mikejohnson51/AOI") # suggested!
+#remotes::install_github("mikejohnson51/climateR")
+library(AOI)
+library(climateR)
+
+getwd()
+source(here("code","paths+packages.R"))          #loads path & packages (from original files)
+source(here("code", "calc_gdd.R"))
+
+
+yrs_common <- 2006:2023
+
+sf_counties <- st_read(here("data", "Boundary_EKSRBcounties.gpkg"))
+sf_watershed <- st_read(here("data", "Boundary_EKSRBwatershed.gpkg"))
+sf_corridor <- st_read(here("data", "Boundary_EKSRBalluvialCorridor.gpkg"))
+
+clipped_counties <- st_intersection(sf_counties, sf_watershed)
+
+
+ggplot() +
+  geom_sf(data = sf_watershed, fill = "lightblue", color = "blue", alpha = 0.3) +
+  geom_sf(data = clipped_counties, fill = NA, color = "black", size = 0.5) +
+  geom_sf(data = sf_corridor, fill = "orange", color = "red", alpha = 0.4) +
+  theme_minimal() +
+  labs(
+    title = "Overlay of Watershed, Counties, and Alluvial Corridor",
+    caption = "Data: SafeKAW"
+  )
+
+
+```
+
+- code from Camden to get gridmet data
+ DON"T RE_RUN (data is saved)
+
+```{r}
+bbox <- st_bbox(c(xmin = -97, xmax = -94.5,
+                  ymax = 40, ymin = 38.6),
+                crs = 4269) %>%
+  bbox_get(.)
+
+# Download daily precip and grass reference ET
+dat <- getGridMET(AOI = bbox,
+                  varname = c('pr','tmmn','tmmx','vs','srad','pet'),
+                  startDate = '2006-01-01',
+                  endDate = '2025-12-31')
+
+dat$precipitation_amount <- project(dat$precipitation_amount, 'epsg:4269')
+dat$daily_minimum_temperature <- project(dat$daily_minimum_temperature, 'epsg:4269')
+dat$daily_maximum_temperature <- project(dat$daily_maximum_temperature, 'epsg:4269')
+dat$daily_mean_wind_speed <- project(dat$daily_mean_wind_speed, 'epsg:4269')
+dat$daily_mean_shortwave_radiation_at_surface <- project(dat$daily_mean_shortwave_radiation_at_surface, 'epsg:4269')
+dat$daily_mean_reference_evapotranspiration_grass <- project(dat$daily_mean_reference_evapotranspiration_grass, 'epsg:4269')
+
+
+writeRaster(dat$precipitation_amount, here("data/climate", "precip.tif"), overwrite = T)
+writeRaster(dat$daily_minimum_temperature, here("data/climate", "tmin.tif"), overwrite = T)
+writeRaster(dat$daily_maximum_temperature, here("data/climate", "tmax.tif"), overwrite = T)
+writeRaster(dat$daily_mean_wind_speed, here("data/climate", "wind.tif"), overwrite = T)
+writeRaster(dat$daily_mean_shortwave_radiation_at_surface, here("data/climate", "swrad.tif"), overwrite = T)
+writeRaster(dat$daily_mean_reference_evapotranspiration_grass, here("data/climate", "et.tif"), overwrite = T)
+
+```
+
+- reloading & calculating spatial means for each county
+```{r}
+mintemp <- rast(here("data/climate", "tmin.tif"))
+maxtemp <- rast(here("data/climate", "tmax.tif"))
+ppt <- rast(here("data/climate", "precip.tif")) 
+pet <- rast(here("data/climate", "et.tif"))
+
+#install.packages("exactextractr")
+library(exactextractr)
+
+#daily spatial means -> flip to long format
+
+tmin_means <- cbind(clipped_counties, exact_extract(mintemp, clipped_counties, "mean")) %>% pivot_longer(cols = 7:7311, 
+                                                                                                         names_to = "Date",
+                                                                                                         values_to = "tmin_K") %>%   
+                                                                                            mutate(Date = str_remove(Date, "mean.tmmn_")) %>%
+                                                                                            mutate(Date = ymd(Date), Year = year(Date), Month = month(Date), Day = day(Date))       
+
+
+tmax_means <- cbind(clipped_counties, exact_extract(maxtemp, clipped_counties, "mean"))  %>% pivot_longer(cols = 7:7311, 
+                                                                                                         names_to = "Date",
+                                                                                                         values_to = "tmax_K") %>%   
+                                                                                              mutate(Date = str_remove(Date, "mean.tmmx_")) %>%
+                                                                                              mutate(Date = ymd(Date), Year = year(Date), Month = month(Date), Day = day(Date))       
+
+#select and join two into one df (not spatial object)
+tmin_means_slim <- tmin_means %>% dplyr::select(name, FIPS, Year, Month, Day, tmin_K ) %>% st_drop_geometry()
+tmax_means_slim <- tmax_means %>% dplyr::select(name, FIPS, Year, Month, Day, tmax_K ) %>% st_drop_geometry()
+
+temps_combo <- left_join(tmin_means_slim, tmax_means_slim,   by = c("name", "FIPS", "Year", "Month", "Day"))%>%
+  mutate(
+    tmin_C = tmin_K - 273.15,
+    tmax_C = tmax_K - 273.15,
+    Date = as.Date(sprintf("%d-%02d-%02d", Year, Month, Day)))
+
+#pet_means
+
+#precip_means
+
+```
+
+- calculated GDD for each county and each year
+```{r}
+#install.packages("pollen")
+library(pollen)
+
+gdd_corn_gs <- calc_gdd_county_year(temps_combo, crop = "Corn",    season = "growing_season")
+gdd_soy_gs  <- calc_gdd_county_year(temps_combo, crop = "Soybeans", season = "growing_season")
+gdd_sorg_gs <- calc_gdd_county_year(temps_combo, crop = "Sorghum", season = "growing_season")
+gdd_wht_gs  <- calc_gdd_county_year(temps_combo, crop = "Wheat",   season = "growing_season")
+
+gdd_all_gs <- dplyr::bind_rows(gdd_corn_gs, gdd_soy_gs, gdd_sorg_gs, gdd_wht_gs)
+
+gdd_all_gs %>% group_by(crop) %>%
+  summarise(
+    min  = min(GDD, na.rm = TRUE),
+    max  = max(GDD, na.rm = TRUE),
+    mean = mean(GDD, na.rm = TRUE)
+  )
+
+write.csv(gdd_all_gs, here("data", "gdd_all_gs.csv"))
+```
+

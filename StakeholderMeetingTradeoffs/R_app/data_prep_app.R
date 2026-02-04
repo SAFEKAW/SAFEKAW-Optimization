@@ -4,7 +4,7 @@ library(here)
 
 
 source(here(file.path("code","paths+packages.R")) )        #loads path & packages (from original files)
-source(here(file.path("code", "01.5_model_wrappers.R")) )  # loads model wrappers
+source(here(file.path("code/optimization", "01.5_model_wrappers.R")) )  # loads model wrappers
 source(here("StakeholderMeetingTradeoffs/R_app/econ.R"))
 
 
@@ -76,6 +76,28 @@ lu_baseline <- df_basin_input_forWQ %>%
 
 saveRDS(lu_baseline, here("StakeholderMeetingTradeoffs/data_app/lu_baseline.rds"))
 
+# ---- 3.5) fert_ref_by_year (baseline fertilizer totals for scaling) ----
+
+# baseline fert intensity on cultivated land (kg/ha), implied by obs_mix
+fert_intensity_baseline_kgha <- obs_mix %>%
+  left_join(crop_params %>% select(Crop, fert_kgha), by = "Crop") %>%
+  summarise(fert_kgha = sum(share * fert_kgha, na.rm = TRUE)) %>%
+  pull(fert_kgha)
+
+fert_ref_by_year <- lu_baseline %>%
+  dplyr::filter(Year %in% years_curr) %>%
+  transmute(
+    Year,
+    Cult_ha = LC_cult_base / 1e4,
+    Fert_ref_kg = Cult_ha * fert_intensity_baseline_kgha
+  )
+
+stopifnot(nrow(fert_ref_by_year) == length(years_curr))
+stopifnot(!anyNA(fert_ref_by_year$Fert_ref_kg))
+
+saveRDS(fert_ref_by_year, here("StakeholderMeetingTradeoffs/data_app/fert_ref_by_year.rds"))
+
+
 # ---- 4) df_opt (app-ready table used by eval) ----
 # This should include anything eval needs year-by-year.
 # If eval expects crop-level econ columns in df_opt, join them once here:
@@ -106,5 +128,6 @@ wq_base_by_year <- wq_base_by_year %>%
   ) %>%
   select(Year, Climate_precip_m, Climate_Tmean_C, precip_percentileChange)
 
-saveRDS(wq_base_by_year, here("StakeholderMeetingTradeoffs/data_app/wq_base_by_year.rds"))
+saveRDS(wq_base_by_year, here("StakeholderMeetingTradeoffs/data_app/wq_base_by_year_from_common_inputs.rds"))
+
 

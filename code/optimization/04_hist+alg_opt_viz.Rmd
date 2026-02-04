@@ -1,0 +1,1013 @@
+---
+title: "Historical + assessing alg outputs"
+author: "BRW"
+date: "2025-10-28"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+```{r}
+library(here)
+source(here("code", "paths+packages.R"))
+source(here("code",  "01.5_model_wrappers.R"))   # loads model wrappers
+
+library("rPref")
+library(colourpicker)
+
+df_county_input <- read_csv(here("data", "common_inputs_county.csv")) 
+df_basin_input_forWQ <- read_csv(here("data","common_inputs_basin.csv")) %>% mutate(Management_FertilizerUse_kgm2 = Management_FertilizerUse_kg / `LandCover_m2_all cult`)
+df_county_areas  <- read_csv(here("data","county_areas.csv"))
+df_int_crop_areanorm <-  read_csv(here("data","int_crop_areanorm_annual.csv"))   
+df_int_basin <-  read_csv(here("data","int_basin_annual.csv"))   
+
+
+yrs_common <- 2006:2023
+
+pal_landcover <- c(
+  "Grass/Pasture/Hay" = "#C1FFC1", #"#9BCD9B",
+  "Cultivated"       = "#8B8B00", #"#8B5742",
+  "Developed"         = "darkgrey"
+)
+
+# crop types
+pal_crops <- c(
+  "Corn"    = "#EEC900",
+  "Soybeans" = "#548B54",
+  "Wheat"   = "#8B7355", ##CD6839,
+  "Sorghum" =  "darkorange"       #"#8B475D"
+)
+
+#c("#8B7355", "#FFB90F", "#C1FFC1", "#8B8B00")
+
+# ggplot2 helper scales so you don't have to retype scale_*_manual every time
+scale_fill_landcover <- function(...) {
+  ggplot2::scale_fill_manual(values = pal_landcover, ...)
+}
+scale_color_landcover <- function(...) {
+  ggplot2::scale_color_manual(values = pal_landcover, ...)
+}
+
+scale_fill_crops <- function(...) {
+  ggplot2::scale_fill_manual(values = pal_crops, ...)
+}
+scale_color_crops <- function(...) {
+  ggplot2::scale_color_manual(values = pal_crops, ...)
+}
+
+```
+
+-   historical pareto front validating that int output is same as before with this plot, and comparing to basin-wide totals
+
+```{r}
+sky1 <- psel(df_int_crop_areanorm, high(NetReturn_ha) * low(NitrateFluxPredicted_kg))
+
+crop_pareto<- ggplot(df_int_crop_areanorm, aes(x =(NitrateFluxPredicted_kg*2.20462262)/1000000, #irrigation
+                   y = NetReturn_ha/1000000, 
+                   color = (Irrigation_m3/1000)*0.0008107132, #iirigation
+                   shape = Crop)) +
+  geom_point(size = 4) +
+  scale_color_viridis_c(name = "Irr (m3)") +
+  labs(title = "Pareto Frontier: CROP Yield, Net Return, and Nitrate Flux",
+       x = "Nitrate Flux (kg)",
+       y = "Net Return ($/ha)") +
+  #facet_wrap(~Crop) + 
+     geom_point(data = sky1, color = 'red') +
+  theme_test()
+crop_pareto
+
+#why is corn not making any money????
+
+#aggregated NR, irrigation, yields 
+sky_irr <- psel(df_int_basin, high(NetReturn_total_usd) *  low(Irrigation_total_m3) ) 
+sky_nflux <- psel(df_int_basin, high(NetReturn_total_usd) *  low(NitrateFluxPredicted_kg) ) 
+
+sky2 <- psel(df_int_basin, high(NetReturn_total_usd) *  low(NitrateFluxPredicted_kg) * low(Irrigation_total_m3) ) 
+
+basin_pareto<- ggplot(df_int_basin, aes(x = NitrateFluxPredicted_kg , #*2.20462262)/1000000, 
+                   y = NetReturn_total_usd , #, /1000000, 
+                   color = Irrigation_total_m3 ) ) + #/1000)*0.0008107132))  +
+                  # color = as.factor(Year))) +
+  geom_point(size = 4) +
+  scale_color_viridis_c(direction = -1, name = "Irrigation (m3/yr)") +
+  labs(title = "Pareto Frontier: Total Net Return, and Nitrate Flux",
+       x = "Nitrate Flux (kg/yr)",
+       y = "Net Return ($/yr)") +
+ # scale_color_viridis_c(direction = -1, name = "Irrigation (thousand ac ft)") +
+ # labs(title = "Pareto Frontier: Total Net Return, and Nitrate Flux",
+   #    x = "Nitrate Flux (million lbs)",
+  #     y = "Net Return (million $)") +
+  #facet_wrap(~Crop) + 
+
+   geom_point(
+    data = sky_irr,
+    aes(x = NitrateFluxPredicted_kg , #* 2.20462262) / 1e6,
+        y = NetReturn_total_usd ), # / 1e6),
+    color = "darkred",
+    size = 2, alpha = 0.75
+  ) +
+  geom_point(
+  data = sky_nflux,
+    aes(x = NitrateFluxPredicted_kg , #* 2.20462262) / 1e6,
+        y = NetReturn_total_usd ), # / 1e6),
+    color = "red",
+    size = 2, alpha = 0.75
+  ) +
+  ggrepel::geom_text_repel(
+  #  data = sky_nflux,
+   data = sky_irr,
+
+    aes(x = NitrateFluxPredicted_kg, #* 2.20462262) / 1e6,
+        y = NetReturn_total_usd , # / 1e6,
+        label = Year),
+    size = 5, 
+    min.segment.length = 0, 
+    seed = 42, 
+    box.padding = 0.75,
+   max.overlaps = Inf,
+    arrow = arrow(length = unit(0.020, "npc")),
+    nudge_x = 1.5,
+    nudge_y = -1.5,
+    color = "black" ) +
+
+   
+  theme_test(base_size = 16) + theme(plot.title.position = "plot")
+
+#crop_pareto 
+basin_pareto
+```
+
+-   what are the conditions of the years that are on current pareto frontier?
+
+```{r}
+# 1) Pareto-efficient years from your basin scatter 
+pareto_years <- sort(unique(sky2$Year))
+
+ec <- ecdf(df_basin_input_forWQ$Climate_precip_m)
+df_basin_input_forWQ <- df_basin_input_forWQ %>%
+  arrange(Year) %>%
+  mutate(
+    precip_percentile       = ec(Climate_precip_m),
+    precip_percentileChange = tidyr::replace_na(precip_percentile - dplyr::lag(precip_percentile), 0)
+  )
+
+# 2) Build a “conditions over time” table that matches what the WQ model used
+drivers <- c(
+  "Climate_precip_m","Climate_Tmean_C","precip_percentileChange"#,
+#  "Management_irrigation_m","Management_FertilizerUse_kgm2",
+ # "LandCover_m2_developed","LandCover_m2_grassPastureHay","LandCover_m2_all cult"
+)
+
+conditions <- df_basin_input_forWQ %>%
+  filter(Year %in% yrs_common) %>%
+  select(Year, all_of(drivers)) %>%
+  mutate(is_pareto_year = Year %in% pareto_years)
+
+# 3) Standardize for comparability (z-scores per variable) and long-form for faceting
+conditions_long <- conditions %>%
+  mutate(across(all_of(drivers), ~ as.numeric(scale(.x)), .names = "{.col}_z")) %>%
+  select(Year, is_pareto_year, ends_with("_z")) %>%
+  pivot_longer(-c(Year, is_pareto_year),
+               names_to = "variable", values_to = "value") %>%
+  mutate(variable = sub("_z$", "", variable))
+
+
+# Map raw variable names -> human-readable facet labels (imperial units)
+facet_labels <- c(
+  Climate_precip_m         = "Annual avg precip",
+  Climate_Tmean_C          = "Annual avg temp",
+  precip_percentileChange  = "Δ precip percentile"
+)
+
+ggplot(conditions_long, aes(Year, value, group = 1)) +
+  geom_line(color = "grey60", linewidth = 0.6) +
+  geom_point(aes(color = is_pareto_year), size = 2) +
+  scale_color_manual(values = c(`TRUE` = "#E64B35", `FALSE` = "grey60"),
+                     name = "Pareto-efficient year") +
+  facet_wrap(
+    ~ variable,
+    scales = "free_y",
+    ncol = 3,
+    labeller = labeller(variable = as_labeller(facet_labels))
+  ) +
+  labs(
+    title = "Drivers over time (standardized), with Pareto-efficient years highlighted",
+    x = NULL, y = "z-score (within variable)"
+  ) +
+  theme_test(base_size = 16) +
+  theme(panel.grid.minor = element_blank(),
+        legend.position = "top")
+```
+
+```{r}
+# A. Pareto frontier from df_int_basin (min Nitrate, max NetReturn)
+pareto_frontier_hist <- function(df,
+                                 xcol = "NitrateFluxPredicted_kg",
+                                 ycol = "NetReturn_total_usd",
+                                 tol_rel = 0.002) {
+  d <- df %>%
+    filter(is.finite(.data[[xcol]]), is.finite(.data[[ycol]])) %>%
+    arrange(.data[[xcol]], desc(.data[[ycol]]))
+
+    # Collapse near-duplicates in x to reduce jaggedness
+    rng <- max(d[[xcol]], na.rm = TRUE)
+    binw <- tol_rel * ifelse(is.finite(rng) && rng > 0, rng, 1)
+    d <- d %>%
+      mutate(.bin = floor((.data[[xcol]] - min(.data[[xcol]], na.rm = TRUE)) / max(binw, 1e-12))) %>%
+      group_by(.bin) %>%
+      slice_max(order_by = .data[[ycol]], n = 1, with_ties = FALSE) %>%
+      ungroup() %>%
+      arrange(.data[[xcol]])
+
+    # Cumulative best in y → actual frontier
+    d %>%
+      mutate(.cum_best = cummax(.data[[ycol]])) %>%
+      filter(.data[[ycol]] >= .cum_best) %>%
+      select(-.bin, -.cum_best)
+}
+
+# B. Knee detector (max distance to chord)
+knee_by_max_distance <- function(df,
+                                 xcol = "NitrateFluxPredicted_kg",
+                                 ycol = "NetReturn_total_usd") {
+  d <- df[order(df[[xcol]], -df[[ycol]]), , drop = FALSE]
+  if (nrow(d) < 3) return(d[0, , drop = FALSE])
+  x1 <- d[[xcol]][1]; y1 <- d[[ycol]][1]
+  x2 <- d[[xcol]][nrow(d)]; y2 <- d[[ycol]][nrow(d)]
+  num <- abs((y2 - y1)*d[[xcol]] - (x2 - x1)*d[[ycol]] + x2*y1 - y2*x1)
+  den <- sqrt((y2 - y1)^2 + (x2 - x1)^2)
+  d$.knee_dist <- if (den > 0) num/den else 0
+  d[which.max(d$.knee_dist), , drop = FALSE]
+}
+
+# Build frontier & knee on historical basin data
+frontier_hist <- pareto_frontier_hist(df_int_basin,
+                                      xcol = "NitrateFluxPredicted_kg",
+                                      ycol = "NetReturn_total_usd")
+
+knee_hist <- knee_by_max_distance(frontier_hist,
+                                  xcol = "NitrateFluxPredicted_kg",
+                                  ycol = "NetReturn_total_usd")
+
+p_hist <- ggplot(df_int_basin,
+                 aes(NitrateFluxPredicted_kg, NetReturn_total_usd, color = factor(Year))) +
+  geom_point(size = 3, alpha = 0.75) +
+  geom_path(data = frontier_hist,
+            aes(NitrateFluxPredicted_kg, NetReturn_total_usd),
+            inherit.aes = FALSE, linewidth = 1.2) +
+  geom_point(data = knee_hist,
+             aes(NitrateFluxPredicted_kg, NetReturn_total_usd),
+             inherit.aes = FALSE, shape = 21, size = 3.2, stroke = 1,
+             fill = "white", color = "black") +
+  scale_color_viridis_d(name = "Year") +
+  labs(title = "Historical Pareto frontier (basin): knee highlighted",
+       x = "Nitrate load (kg/yr)",
+       y = "Total Net Return ($/yr)") +
+  theme_minimal(base_size = 12)
+p_hist
+
+```
+
+-   what was the crop comp at the knee?
+
+```{r}
+# knee year from your frontier
+knee_year <- knee_hist$Year[1]
+
+# Crop mix at the knee year (uses area; falls back to ha if m2 missing)
+crop_levels <- c("Corn","Soybeans","Sorghum","Wheat")
+
+crop_comp_knee <- df_int_crop_areanorm %>%
+  filter(Year == knee_year, Crop %in% crop_levels) %>%
+  group_by(Crop) %>%
+  summarise(
+    area_m2 = if ("Crop_area_m2" %in% names(.)) sum(Crop_area_m2, na.rm = TRUE)
+              else if ("Crop_area_ha" %in% names(.)) sum(Crop_area_ha, na.rm = TRUE) * 1e4
+              else NA_real_,
+    .groups = "drop"
+  ) %>%
+  mutate(frac = area_m2 / sum(area_m2, na.rm = TRUE))
+
+library(scales)
+# table
+crop_comp_knee %>%
+  transmute(Year = knee_year, Crop, frac_pct = percent(frac, accuracy = 0.1))
+
+ # with historical whiskers 
+# --- Historical crop fractions over all years ---
+hist_crop_frac <- df_int_crop_areanorm %>%
+  filter(Crop %in% crop_levels) %>%
+  group_by(Year, Crop) %>%
+  summarise(
+    area_m2 = if ("Crop_area_m2" %in% names(.)) sum(Crop_area_m2, na.rm = TRUE)
+              else if ("Crop_area_ha" %in% names(.)) sum(Crop_area_ha, na.rm = TRUE) * 1e4
+              else NA_real_,
+    .groups = "drop"
+  ) %>%
+  group_by(Year) %>%
+  mutate(frac = area_m2 / sum(area_m2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  group_by(Crop) %>%
+  summarise(
+    ymin = min(frac, na.rm = TRUE),
+    ymed = median(frac, na.rm = TRUE),
+    ymax = max(frac, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# Join whiskers onto your knee-year table
+crop_comp_knee_w <- crop_comp_knee %>%
+  left_join(hist_crop_frac, by = "Crop")
+
+cropknee <- ggplot(crop_comp_knee_w, aes(x = reorder(Crop, -frac), y = frac, fill = Crop, color = Crop)) +
+  # historical range whiskers
+  geom_errorbar(aes(ymin = ymin, ymax = ymax), width = 0.25, linewidth = 0.6, color = "grey35") +
+  # (optional) historical median dot
+  geom_point(aes(y = ymed), shape = 21, fill = "white", color = "grey25", size = 2.4, stroke = 0.6) +
+  # knee-year bar
+  geom_col(width = 0.75, alpha = 0.7) +
+  scale_fill_crops() +
+    scale_color_crops() +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0, 1)) +
+  labs(title = paste0("Crop composition at the knee (", knee_year, ")"),
+       x = NULL, y = "Fraction of cultivated area") +
+  theme_minimal(base_size = 16) +
+  theme(legend.position = "none", plot.title.position = "plot")
+cropknee
+
+# --- Historical land-cover fractions over all years ---
+# --- 1) Historical land-cover fractions over all years (for whiskers) ----
+lc_hist <- df_basin_input_forWQ %>%
+  select(
+    Year,
+    LandCover_m2_all_cult = `LandCover_m2_all cult`,
+    LandCover_m2_grassPastureHay,
+    LandCover_m2_developed
+  ) %>%
+  pivot_longer(
+    -Year,
+    names_to = "Group",
+    values_to = "area_m2"
+  ) %>%
+  group_by(Year) %>%
+  mutate(frac = area_m2 / sum(area_m2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(Group = dplyr::recode(
+    Group,
+    "LandCover_m2_all_cult"       = "Cultivated",
+    "LandCover_m2_grassPastureHay" = "Grass/Pasture/Hay",
+    "LandCover_m2_developed"       = "Developed"
+  )) %>%
+  group_by(Group) %>%
+  summarise(
+    ymin = min(frac, na.rm = TRUE),
+    ymed = median(frac, na.rm = TRUE),
+    ymax = max(frac, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+# --- 2) Knee-year land-cover fractions (lc_knee) ----
+lc_knee <- df_basin_input_forWQ %>%
+  filter(Year == knee_year) %>%
+  select(
+    Year,
+    LandCover_m2_all_cult = `LandCover_m2_all cult`,
+    LandCover_m2_grassPastureHay,
+    LandCover_m2_developed
+  ) %>%
+  pivot_longer(
+    -Year,
+    names_to = "Group",
+    values_to = "area_m2"
+  ) %>%
+  group_by(Year) %>%
+  mutate(frac = area_m2 / sum(area_m2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(Group = dplyr::recode(
+    Group,
+    "LandCover_m2_all_cult"       = "Cultivated",
+    "LandCover_m2_grassPastureHay" = "Grass/Pasture/Hay",
+    "LandCover_m2_developed"       = "Developed"
+  ))
+
+# --- 3) Join knee-year values with historical whiskers ----
+lc_knee_w <- lc_knee %>%
+  left_join(lc_hist, by = "Group")
+
+LUknee <- ggplot(lc_knee_w,
+                 aes(x = reorder(Group, -frac), y = frac,
+                     fill = Group, color = Group)) +
+  geom_errorbar(aes(ymin = ymin, ymax = ymax),
+                width = 0.25, linewidth = 0.6, color = "grey35") +
+  geom_point(aes(y = ymed),
+             shape = 21, fill = "white", color = "grey25",
+             size = 2.4, stroke = 0.6) +
+  geom_col(width = 0.75, alpha = 0.7) +
+  scale_fill_landcover() +
+  scale_color_landcover() +
+  scale_y_continuous(
+    labels = scales::percent_format(accuracy = 1),
+    limits = c(0, 1)
+  ) +
+  labs(
+    title = paste0("Land-cover groups at the knee (", knee_year, ")"),
+    x = NULL, y = "Fraction of basin area"
+  ) +
+  theme_minimal(base_size = 16) +
+  theme(legend.position = "none",
+        plot.title.position = "plot")
+
+
+LUknee /
+  cropknee 
+
+
+```
+ 
+
+
+```{r}
+frontier_years_obs <- unique(frontier_hist$Year)   # or whatever object you used
+
+
+# Per-year crop fractions, restricted to frontier years
+obs_frontier_crops <- df_int_crop_areanorm %>%
+  filter(
+    Year %in% frontier_years_obs,
+    Crop %in% crop_levels
+  ) %>%
+  group_by(Year, Crop) %>%
+  summarise(
+    area_m2 = if ("Crop_area_m2" %in% names(.)) sum(Crop_area_m2, na.rm = TRUE)
+              else if ("Crop_area_ha" %in% names(.)) sum(Crop_area_ha, na.rm = TRUE) * 1e4
+              else NA_real_,
+    .groups = "drop"
+  ) %>%
+  group_by(Year) %>%
+  mutate(Share = area_m2 / sum(area_m2, na.rm = TRUE)) %>%
+  ungroup()
+
+# Same structure as your optimization frontier plot
+ggplot(obs_frontier_crops,
+       aes(Share, after_stat(density), fill = Crop)) +
+  geom_histogram(position = "identity", alpha = 0.6, bins = 25) +
+  facet_wrap(~Crop, ncol = 2) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_fill_crops() +
+  labs(
+    title = "Observed crop share distributions along the frontier",
+    x = "Share of cultivated area", y = "Density"
+  ) +
+  theme_test(base_size = 14) +
+  theme(legend.position = "none")
+
+
+
+
+obs_frontier_lc <- df_basin_input_forWQ %>%
+  filter(Year %in% frontier_years_obs) %>%
+  select(
+    Year,
+    LandCover_m2_all_cult = `LandCover_m2_all cult`,
+    LandCover_m2_grassPastureHay,
+    LandCover_m2_developed
+  ) %>%
+  pivot_longer(
+    -Year,
+    names_to = "Group",
+    values_to = "area_m2"
+  ) %>%
+  group_by(Year) %>%
+  mutate(frac = area_m2 / sum(area_m2, na.rm = TRUE)) %>%
+  ungroup() %>%
+  mutate(Group = dplyr::recode(
+    Group,
+    "LandCover_m2_all_cult"       = "Cultivated",
+    "LandCover_m2_grassPastureHay" = "Grass/Pasture/Hay",
+    "LandCover_m2_developed"       = "Developed"
+  ))
+
+ggplot(obs_frontier_lc,
+       aes(frac, after_stat(density), fill = Group)) +
+  geom_histogram(position = "identity", alpha = 0.6, bins = 25) +
+  facet_wrap(~Group, ncol = 2) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_fill_landcover() +
+  labs(
+    title = "Observed land-cover group distributions along the frontier",
+    x = "Share of basin area", y = "Density"
+  ) +
+  theme_test(base_size = 12) +
+  theme(legend.position = "none")
+
+```
+
+
+
+
+#Algorthm outputs!!!!
+-   loading opt runs
+
+```{r}
+#robust_out <- readRDS(here("data", "robust_out_Sorg_Wheat_1020251028_1600.rds")) 
+#robust_frontier <- readRDS(here("data", "robust_frontier_out_Sorg_Wheat_1020251028_1600.rds")) 
+
+robust_out <- readRDS(here("data", "robust_out_baseline_test_short20251209_2103.rds")) 
+#robust_out_uncon_exp_short20251029_1556.rds
+robust_frontier <- readRDS(here("data", "robust_out_nochange_short20251029_1644.rds" )) # "robust_out_frontier_uncon_exp_short20251029_1556.rds")) 
+
+
+# Knee (type-safe)
+knee_by_max_distance <- function(df, xcol = "Nitrate_obj", ycol = "NR_obj") {
+  # add stable row id, build working copy with numeric x/y
+  d <- df %>%
+    mutate(
+      .row_id = row_number(),
+      .x = suppressWarnings(as.numeric(.data[[xcol]])),
+      .y = suppressWarnings(as.numeric(.data[[ycol]]))
+    ) %>%
+    filter(is.finite(.x), is.finite(.y)) %>%
+    arrange(.x, dplyr::desc(.y))
+
+  if (nrow(d) < 3L) return(d[0, , drop = FALSE])
+
+  # distance from each point to the line (x1,y1)-(x2,y2)
+  x1 <- d$.x[1]; y1 <- d$.y[1]
+  x2 <- d$.x[nrow(d)]; y2 <- d$.y[nrow(d)]
+  num <- abs((y2 - y1) * d$.x - (x2 - x1) * d$.y + x2 * y1 - y2 * x1)
+  den <- sqrt((y2 - y1)^2 + (x2 - x1)^2)
+  d$.knee_dist <- if (den > 0) num / den else 0
+
+  # pick knee row id, then recover original row from df
+  knee_row <- d %>% slice(which.max(.knee_dist)) %>% pull(.row_id)
+  df %>% mutate(.row_id = row_number()) %>%
+    filter(.row_id == knee_row) %>%
+    dplyr::select(-.row_id)
+}
+
+
+robust_knee <- knee_by_max_distance(robust_out)
+
+```
+
+-   plots
+
+```{r}
+ggplot(robust_out, aes(Nitrate_obj, NR_obj, color = Soybeans, size = Corn)) +
+  geom_point(alpha = 0.35) +
+ # geom_path(data = robust_frontier, linewidth = 1.4, color = "black") +
+#  geom_point(data = robust_knee, shape = 21, size = 3.2, stroke = 1,
+ #            fill = "red", color = "black") +
+  scale_color_viridis_c(name = "Soybean share") +
+  labs(title = "Robust (mean) Pareto frontier over all years",
+       x = "Mean nitrate (kg/yr)", y = "Mean net return ($/yr)") +
+  theme_minimal(base_size = 16)
+
+ggplot(robust_out, aes(Nitrate_obj, NR_obj, color = Wheat, size = Sorghum)) +
+  geom_point(alpha = 0.35) +
+ # geom_path(data = robust_frontier, linewidth = 1.4, color = "black") +
+#  geom_point(data = robust_knee, shape = 21, size = 3.2, stroke = 1,
+  #           fill = "white", color = "black") +
+  scale_color_viridis_c(name = "Wheat share", option = "plasma") +
+  labs(title = "Robust (mean) Pareto frontier over all years",
+       x = "Mean nitrate (kg/yr)", y = "Mean net return ($/yr)") +
+  theme_minimal(base_size = 16)
+
+
+
+#frontier only
+ggplot(robust_out, aes(Nitrate_obj, NR_obj,
+                            size = Sorghum, color = Wheat)) +
+  geom_point(alpha = 0.7) +
+  scale_color_viridis_c(option = "plasma") +
+  labs(x = "Mean nitrate (kg/yr)", y = "Mean net return ($/yr)",
+       title = "Pareto frontier (filtered)") + 
+    theme_minimal(base_size = 16)
+
+
+ggplot(robust_out, aes(Nitrate_obj, NR_obj,
+                            size = Corn, color = Soybeans)) +
+  geom_point(alpha = 0.7) +
+  geom_point(data = robust_knee, shape = 21, size = 3.2, stroke = 1,
+           fill = "red", color = "black") +
+  scale_color_viridis_c() +
+  labs(x = "Mean nitrate (kg/yr)", y = "Mean net return ($/yr)",
+       title = "Pareto frontier (filtered)") + 
+    theme_minimal(base_size = 16)
+
+
+```
+
+```{r}
+front_only <- robust_out %>%
+  mutate(across(c(Corn, Soybeans, Sorghum, Wheat), as.numeric))
+
+# ΔCult density
+ggplot(front_only, aes(delta_cult_pp)) +
+  geom_histogram(bins = 25, alpha = 0.7) +
+  labs(title = "ΔCult (pp of baseline) along the frontier",
+       x = "ΔCultivated (percentage points)", y = "Count") +
+  theme_minimal(base_size = 12)
+
+# Crop share densities (stack as facets)
+front_long <- front_only %>%
+  select(Corn, Soybeans, Sorghum, Wheat) %>%
+  pivot_longer(everything(), names_to = "Crop", values_to = "Share")
+
+ggplot(front_long, aes(Share, after_stat(density), fill = Crop)) +
+  geom_histogram(position = "identity", alpha = 0.6, bins = 25) +
+  facet_wrap(~Crop, ncol = 2) +
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+    scale_fill_crops() +
+  labs(title = "Crop share distributions along the frontier",
+       x = "Share of cultivated area", y = "Density") +
+  theme_test(base_size = 14) +
+  theme(legend.position = "none")
+
+
+```
+
+```{r}
+# 1) Make sure crop shares are numeric
+front_only <- robust_out %>%
+  mutate(across(c(Corn, Soybeans, Sorghum, Wheat), as.numeric))
+
+# 2) Long version for the histograms
+front_long <- front_only %>%
+  select(Corn, Soybeans, Sorghum, Wheat) %>%
+  pivot_longer(everything(), names_to = "Crop", values_to = "Share")
+
+# 3) Pick low / middle / high points along the frontier
+n_front <- nrow(front_only)
+
+idx_low  <- 1L
+idx_mid  <- ceiling(n_front / 2)
+idx_high <- n_front
+
+
+highlight_long <- front_only %>%
+  arrange(Irrig_m3_obj) %>%
+  slice(c(idx_low, idx_mid, idx_high)) %>%
+  mutate(point = factor(
+    c("Low frontier", "Middle frontier", "High frontier"),
+    levels = c("Low frontier", "Middle frontier", "High frontier")
+  )) %>%
+  select(point, Corn, Soybeans, Sorghum, Wheat) %>%
+  pivot_longer(cols = c(Corn, Soybeans, Sorghum, Wheat),
+               names_to = "Crop", values_to = "Share")
+
+# 4) Plot with vertical lines for the three highlighted solutions
+ggplot(front_long, aes(Share, after_stat(density), fill = Crop)) +
+  geom_histogram(position = "identity", alpha = 0.6, bins = 25) +
+  geom_vline(
+    data = highlight_long,
+    aes(xintercept = Share, colour = point),
+    linewidth = 0.8,
+    linetype = "dashed",
+    show.legend = TRUE
+  ) +
+  facet_wrap(~Crop) + #, ncol = 2
+  scale_x_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_fill_crops() +
+  scale_colour_manual(values = c(
+    "Low frontier"    = "lightblue",
+    "Middle frontier" = "blue",
+    "High frontier"   = "darkblue"
+  )) +
+  labs(
+    title = "Crop share distributions along the frontier",
+    x = "Share of cultivated area",
+    y = "Density",
+    colour = "Frontier point"
+  ) +
+  theme_test(base_size = 14) +
+  guides(fill = "none") +              # hide crop fill legend, keep line legend
+  theme(legend.position = "bottom")
+
+```
+
+
+
+```{r}
+front_binned <- robust_out %>%
+  mutate(N_bin = cut(Nitrate_obj,
+                     breaks = quantile(Nitrate_obj, probs = seq(0,1,0.25), na.rm = TRUE),
+                     include.lowest = TRUE, dig.lab = 6)) %>%
+  group_by(N_bin) %>%
+  summarise(
+    Corn     = mean(Corn, na.rm = TRUE),
+    Soybeans = mean(Soybeans, na.rm = TRUE),
+    Sorghum  = mean(Sorghum, na.rm = TRUE),
+    Wheat    = mean(Wheat, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  # renormalize within each bin (guard against small numeric drift)
+  rowwise() %>%
+  mutate(s = sum(c_across(Corn:Wheat), na.rm = TRUE),
+         across(Corn:Wheat, ~ .x / ifelse(s > 0, s, 1))) %>%
+  ungroup() %>%
+  pivot_longer(Corn:Wheat, names_to = "Crop", values_to = "Share")
+
+ggplot(front_binned, aes(N_bin, Share, fill = Crop)) +
+  geom_col(position = "stack", width = 0.8) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1), limits = c(0,1)) +
+      scale_fill_crops() +
+  labs(title = "Average crop mix by frontier nitrate quartile",
+       x = "Frontier nitrate (quartiles)", y = "Share of cultivated area") +
+  theme_minimal(base_size = 16)  +
+  theme(axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1))
+
+```
+
+```{r}
+# Knee crop composition
+knee_comp <- robust_frontier %>%
+  semi_join(robust_knee, by = c("Nitrate_obj","NR_obj")) %>%
+  select(Corn, Soybeans, Sorghum, Wheat) %>%
+  pivot_longer(everything(), names_to = "Crop", values_to = "Frac")
+
+crop_knee <- ggplot(knee_comp, aes(Crop, Frac, fill = Crop)) +
+  geom_col(width = 0.75) +
+      scale_fill_crops() +
+  scale_y_continuous(labels 
+                     = percent_format(accuracy = 1), limits = c(0,1)) +
+  labs(title = "Crop composition at the robust knee",
+       x = NULL, y = "Fraction of cultivated area") +
+  theme_minimal(base_size = 16) + theme(legend.position = "none")
+
+
+lu_baseline <- df_basin_input_forWQ %>%
+  select(
+    Year,
+    LC_cult_base  = `LandCover_m2_all cult`,
+    LC_grass_base = LandCover_m2_grassPastureHay,
+    LC_dev_base   = LandCover_m2_developed
+  ) %>%
+  mutate(LC_total = LC_cult_base + LC_grass_base + LC_dev_base)
+
+# Knee LC groups using mean baseline across years
+lu_means <- lu_baseline %>%
+  summarise(
+    LC_cult_base_mean  = mean(LC_cult_base,  na.rm = TRUE),
+    LC_dev_base_mean   = mean(LC_dev_base,   na.rm = TRUE),
+    LC_total_mean      = mean(LC_total,      na.rm = TRUE)
+  )
+
+knee_delta <- robust_knee$delta_cult_pp[1]
+cult_knee  <- lu_means$LC_cult_base_mean * (1 + knee_delta/100)
+dev_knee   <- lu_means$LC_dev_base_mean
+grass_knee <- lu_means$LC_total_mean - dev_knee - cult_knee
+
+lc_knee <- tibble(
+  Group   = c("Cultivated","Grass/Pasture/Hay","Developed"),
+  area_m2 = c(cult_knee, grass_knee, dev_knee)
+) %>%
+  mutate(frac = area_m2 / sum(area_m2, na.rm = TRUE))
+
+LU_knee <- ggplot(lc_knee, aes(x = reorder(Group, -frac), y = frac, fill = Group)) +
+  geom_col(width = 0.75) +
+        scale_fill_landcover() +
+  scale_y_continuous(labels = percent_format(accuracy = 1), limits = c(0,1)) +
+  labs(title = "Land-cover groups at the robust knee ",
+       x = NULL, y = "Fraction of basin area") +
+  theme_minimal(base_size = 16) + theme(legend.position = "none")
+
+LU_knee / crop_knee 
+
+```
+
+
+
+
+
+  - 3 objective plots, 4 scenarios
+  
+```{r}
+robust_bau <- readRDS(here("data", "robust_out_BAU_short20251104_1521.rds")) %>%
+  mutate(Scenario = "BAU")
+
+robust_div <- readRDS(here("data", "robust_out_diversified_short20251104_2043.rds")) %>%
+  mutate(Scenario = "Diversified")
+
+robust_rainfed <- readRDS(here("data", "robust_out_rainfed_short20251104_1540.rds")) %>%
+  mutate(Scenario = "Rainfed")
+
+robust_irrig <- readRDS(here("data", "robust_out_irrexp_short20251104_1540.rds")) %>%
+  mutate(Scenario = "Irrigation")
+
+
+# ---- combine them ----
+all_runs <- bind_rows(
+  robust_bau,
+  robust_div,
+  robust_rainfed,
+  robust_irrig,
+)
+
+
+
+```
+
+```{r}
+knee_points <- all_runs %>%
+  group_by(Scenario) %>%
+  mutate(
+    # normalize within scenario to balance axes
+    Nn = (Nitrate_obj - min(Nitrate_obj, na.rm=TRUE)) /
+         (max(Nitrate_obj, na.rm=TRUE) - min(Nitrate_obj, na.rm=TRUE) + 1e-9),
+    Pn = 1 - (NRha_obj - min(NRha_obj, na.rm=TRUE)) /
+             (max(NRha_obj, na.rm=TRUE) - min(NRha_obj, na.rm=TRUE) + 1e-9),
+    In = (Irrig_m3_obj - min(Irrig_m3_obj, na.rm=TRUE)) /
+         (max(Irrig_m3_obj, na.rm=TRUE) - min(Irrig_m3_obj, na.rm=TRUE) + 1e-9),
+    dist_to_ideal = sqrt(Nn^2 + Pn^2 + In^2)
+  ) %>%
+  slice_min(dist_to_ideal, n = 1, with_ties = FALSE) %>%
+  ungroup() %>%
+  select(Scenario, Nitrate_obj, NRha_obj, Irrig_m3_obj,
+         Corn, Soybeans, Wheat, Sorghum,
+         delta_cult_pp, theta_irrig_raw, Nn, Pn, In)
+
+
+
+
+frontier_ranges <- all_runs %>%
+  group_by(Scenario) %>%
+  summarise(
+    N_min = min((Nitrate_obj*2.20462262)/1000000, na.rm = TRUE),
+        N_med = median((Nitrate_obj*2.20462262)/1000000, na.rm=TRUE),
+    N_max = max((Nitrate_obj*2.20462262)/1000000, na.rm = TRUE),
+    Profit_min = min(NRha_obj/1000000, na.rm = TRUE),
+        Profit_med = median(NRha_obj/1000000, na.rm=TRUE),
+    Profit_max = max(NRha_obj/1000000, na.rm = TRUE),
+    I_min = min((Irrig_m3_obj/1000)*0.0008107132, na.rm = TRUE),
+        I_med = median((Irrig_m3_obj/1000)*0.0008107132, na.rm=TRUE),
+    I_max = max((Irrig_m3_obj/1000)*0.0008107132, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+ - plots 
+```{r}
+# 2) Lock scenario order by nitrate median BEFORE pivoting
+order_levels <- frontier_ranges %>% arrange(N_med) %>% pull(Scenario)
+
+# 3) Now pivot to long and plot-ready
+rng_long <- frontier_ranges %>%
+  tidyr::pivot_longer(-c(Scenario), names_to = "metric", values_to = "value") %>%
+  tidyr::separate(metric, into = c("Objective","stat"), sep = "_") %>%
+  tidyr::pivot_wider(names_from = stat, values_from = value) %>%  # gives columns min, med, max
+  dplyr::mutate(
+    Objective = factor(Objective,
+      levels = c("N","Profit","I"),
+      labels = c("Nitrate (million lbs/yr, ↓)","Net Return (million $/yr, ↑)","Irrigation (thousand acre ft/yr, ↓)")
+
+      #labels = c("Nitrate (kg/yr, ↓)","Net Return ($/yr, ↑)","Irrigation (m³/yr, ↓)")
+    ),
+    Scenario = factor(Scenario, levels = order_levels)  # use precomputed order
+  )
+
+ggplot(rng_long, aes(x = Scenario, ymin = min, ymax = max)) +
+  geom_linerange(linewidth = 1) +
+  geom_point(aes(y = med), size = 2.6) +
+  coord_flip() +
+  facet_wrap(~ Objective, scales = "free_x", ncol = 1,  strip.position = "bottom" ) +
+  labs(
+    title = "Objective ranges on Pareto front by scenario",
+    x = NULL, y = NULL,
+    caption = "Lines = min–max; dots = median (frontier only)"
+  ) +
+  theme_minimal(base_size = 16)+ theme(plot.title.position = "plot", strip.placement = "outside")
+```
+
+
+```{r}
+
+
+ggplot(all_runs, aes((Nitrate_obj*2.20462262)/1000000, NRha_obj/1000000, color = (Irrig_m3_obj*0.0008107132)/1000 )) +
+  #geom_path(aes(group = Scenario), linewidth = 1, alpha = 0.8) +
+  geom_point(size = 4, alpha = 0.75) +
+  # Knee markers
+  geom_point(
+    data = knee_points,
+    aes((Nitrate_obj*2.20462262)/1000000, NRha_obj/1000000),
+    inherit.aes = FALSE,
+    shape = 21, fill = "red", color = "black", size = 2, stroke = 0.75, alpha = 0.8
+  ) +
+  ggrepel::geom_text_repel(
+    data = knee_points,
+    aes((Nitrate_obj*2.20462262)/1000000, NRha_obj/1000000,label = Scenario),
+     size = 6,
+    min.segment.length = 0.5, 
+    seed = 42, 
+    box.padding = 2,
+   max.overlaps = Inf,
+    arrow = arrow(length = unit(0.010, "npc")),
+    nudge_x = 2.5,
+    nudge_y = -2.5,
+    color = "black")+
+ 
+  scale_color_viridis_c(direction = -1, name = "Irrigation (thousand ac ft/yr)", trans = "log10", 
+    labels = scales::label_number(
+    accuracy = 0.1,        # control rounding
+    big.mark = ",",        # add commas
+    trim = TRUE
+  )) +
+  labs(
+    title = "Pareto fronts: Nitrate vs Net Return (colored by irrigation)",
+    x = "Nitrate (million lbs/yr, ↓ better)",
+    y = "Net Return (million $/yr, ↑ better)"
+  ) +
+  theme_test(base_size = 16) + theme(plot.title.position = "plot")
+```
+
+
+```{r}
+# Prepare tidy crop shares at the knee
+knee_comp <- knee_points %>%
+  select(Scenario, Corn, Soybeans, Wheat, Sorghum, delta_cult_pp, theta_irrig_raw) %>%
+  pivot_longer(cols = c(Corn, Soybeans, Wheat, Sorghum),
+               names_to = "Crop", values_to = "Share") %>%
+  mutate(Crop = factor(Crop, levels = c("Corn","Soybeans","Wheat","Sorghum")))
+
+crop_knee_alg <- ggplot(knee_comp, aes(x = fct_reorder(Scenario, Share, .fun = function(x) -mean(x)), y = Share, fill = Crop)) +
+  geom_col(width = 0.7) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_fill_crops() +
+  coord_flip() +
+  labs(
+    title = "Crop composition at knee by scenario",
+    x = NULL, y = "Share of cultivated area"#,
+   # subtitle = "Consider annotating bars with Δcult (pp) and irrigation knob (θ)"
+  ) +
+  theme_minimal(base_size = 14) + theme(plot.title.position = "plot")
+
+```
+
+```{r}
+# 1) grab a single reference year from lu_baseline (e.g., last year)
+lu_ref <- lu_baseline %>%
+  dplyr::slice_max(Year, n = 1, with_ties = FALSE) %>%
+  dplyr::transmute(
+    dev_frac_base  = LC_dev_base  / LC_total,
+    cult_frac_base = LC_cult_base / LC_total
+  )
+
+stopifnot(nrow(lu_ref) == 1)
+dev_frac_base  <- lu_ref$dev_frac_base
+cult_frac_base <- lu_ref$cult_frac_base
+
+# 2) convert each knee to large-class FRACTIONS
+#    IMPORTANT: choose ONE of these two interpretations for delta_cult_pp:
+
+as_percent_change <- TRUE  # set FALSE if your delta is "percentage points"
+
+knee_lu <- knee_points %>%
+  dplyr::mutate(
+    # New cultivated fraction
+    Cult_frac = if (as_percent_change) {
+      pmin(1 - dev_frac_base, pmax(0, cult_frac_base * (1 + delta_cult_pp/100)))
+    } else {
+      # percentage-points: add directly to the fraction
+      pmin(1 - dev_frac_base, pmax(0, cult_frac_base + delta_cult_pp/100))
+    },
+    Dev_frac   = dev_frac_base,                           # Developed fixed
+    Grass_frac = pmax(0, 1 - Dev_frac - Cult_frac)        # remainder
+  ) %>%
+  dplyr::select(Scenario, Cult_frac, Grass_frac, Dev_frac)
+
+# 3) tidy for plotting
+knee_lu_long <- knee_lu %>%
+  tidyr::pivot_longer(dplyr::ends_with("_frac"),
+                      names_to = "Class", values_to = "Share") %>%
+  dplyr::mutate(
+    Class = dplyr::recode(Class,
+                          Cult_frac = "Cultivated",
+                          Grass_frac = "Grassland",
+                          Dev_frac  = "Developed"),
+    Class = factor(Class, levels = c("Developed","Grassland","Cultivated"))
+  )
+
+# 4) plot
+LU_knee_alg <- ggplot(knee_lu_long,
+       aes(x = forcats::fct_rev(Scenario), y = Share, fill = Class)) +
+  geom_col(width = 0.7) +
+  scale_y_continuous(labels = scales::percent_format(accuracy = 1)) +
+  scale_fill_manual(values = c(
+    Developed = "darkgrey", Grassland = "#C1FFC1", Cultivated = "#8B8B00"
+  ), drop = FALSE) +           # drop=FALSE keeps legend entries even if one share is 0
+  coord_flip() +
+  labs(title = "Land use composition at knee by scenario",
+       x = NULL, y = "Share of total basin area") +
+  theme_minimal(base_size = 14) +
+  theme(plot.title.position = "plot")
+
+
+LU_knee_alg / #
+  crop_knee_alg
+```
+

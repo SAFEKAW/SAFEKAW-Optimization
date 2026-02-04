@@ -1,7 +1,11 @@
 eval_candidate_all_years <- function(
-    x, years_vec, df_opt, wq_model_log1p, wq_context,
+    x, years_vec, df_opt, 
+    wq_model_mlr, wq_base_by_year,
     lu_baseline, universal_costs, crop_params,
-    baseline_irrig_frac, hist_mix = NULL,
+    baseline_irrig_frac, 
+    hist_mix = NULL,
+    fert_ref_by_year,
+    policy = policy,
     weights = NULL, na_penalty = 1e9
 ){
   stopifnot(length(years_vec) > 0)
@@ -11,11 +15,13 @@ eval_candidate_all_years <- function(
     \(Y) eval_candidate(
       x = x, Y = Y,
       df_opt = df_opt,
-      wq_model_log1p = wq_model_log1p,
-      wq_context = wq_context,
+      wq_model_mlr = wq_model_mlr,
+      wq_base_by_year = wq_base_by_year,
       lu_baseline = lu_baseline,
       universal_costs = universal_costs,
       crop_params = crop_params,
+      fert_ref_by_year = fert_ref_by_year,
+      policy = policy,
       baseline_irrig_frac = baseline_irrig_frac,
       hist_mix = hist_mix
     ),
@@ -44,3 +50,4 @@ eval_candidate_all_years <- function(
   if (any(!is.finite(out))) out[] <- na_penalty
   out
 }
+

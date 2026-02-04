@@ -1,0 +1,610 @@
+---
+title: "SAFEKAW optimization script - manual opt"
+author: "BRW"
+date: "2025-10-06"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# snippet about this code
+
+```{r}
+getwd()
+source(file.path("code","paths+packages.R"))          #loads path & packages (from original files)
+source(file.path("code", "01.5_model_wrappers.R"))   # loads model wrappers
+
+library("rPref")
+library(colourpicker)
+
+df_county_input <- read_csv(file.path("data", "common_inputs_county.csv")) 
+df_basin_input_forWQ <- read_csv(file.path("data","common_inputs_basin.csv")) %>% mutate(Management_FertilizerUse_kgm2 = Management_FertilizerUse_kg / `LandCover_m2_all cult`)
+df_county_areas  <- read_csv(file.path("data","county_areas.csv"))
+df_int_crop_areanorm <-  read_csv(file.path("data","int_crop_areanorm_annual.csv"))   
+df_int_basin <-  read_csv(file.path("data","int_basin_annual.csv"))   
+
+
+yrs_common <- 2006:2023
+
+```
+
+- assigning colors
+```{r}
+#c("#9BCD9B", "#8B5742", "#68838B")
+
+#c("#EEC900", "#548B54", "#CD6839", "#8B475D")
+
+pal_landcover <- c(
+  "Grass/Pasture/Hay" = "#C1FFC1", #"#9BCD9B",
+  "Cultivated"       = "#8B8B00", #"#8B5742",
+  "Developed"         = "darkgrey"
+)
+
+# crop types
+pal_crops <- c(
+  "Corn"    = "#EEC900",
+  "Soybeans" = "#548B54",
+  "Wheat"   = "#8B7355", ##CD6839,
+  "Sorghum" =  "darkorange"       #"#8B475D"
+)
+
+
+# ggplot2 helper scales so you don't have to retype scale_*_manual every time
+scale_fill_landcover <- function(...) {
+  ggplot2::scale_fill_manual(values = pal_landcover, ...)
+}
+scale_color_landcover <- function(...) {
+  ggplot2::scale_color_manual(values = pal_landcover, ...)
+}
+
+scale_fill_crops <- function(...) {
+  ggplot2::scale_fill_manual(values = pal_crops, ...)
+}
+scale_color_crops <- function(...) {
+  ggplot2::scale_color_manual(values = pal_crops, ...)
+}
+
+```
+
+
+
+# Manual optimization
+- can I vary land use assuming total land use doesn't change?
+    - climate is not changing
+    - so just need to re-calc irr and yield and net return totals based on new land use, then re-run nitrate model on new land use
+
+- need to run this for alg as well
+```{r}
+# --- 1) ECON PARAMS -----------------------------------------------------------
+universal_costs <- list(
+  fert_app_cost_ha    = 470,   # $/ha - is this a flat operational cost or what?
+#  herb_pest_cost_ha = 250, #$/ha  (Ikenna AWM, 2025, same here ^)
+  irr_cost_per_m3 = 0.029 )   # $/m³ (Kisekka et al., 2016)
+ 
+# https://ag.purdue.edu/commercialag/home/paer-article/2023-purdue-crop-cost-and-return-guide
+
+crop_params <- tibble::tribble(
+  ~Crop,       ~price_per_kg, ~seed_cost_ha, ~fert_kgHa, ~fert_price_per_kg, 
+  ~herb_pest_cost_ha,  
+  ~other_variable_costs_ha, ~crop_insurance_ha,
+
+  # Rotation Corn (Purdue Table 1, avg-prod soil)
+  "Corn",      0.25,          245,           250,         2,
+               120,          
+               75,            50,
+
+  # Rotation Soybeans
+  "Soybeans",  0.50,          150,            55,         8.5,
+               75,            
+               100,             40,
+
+  # Wheat
+  "Wheat",     0.3,          120,            90,         5,
+               45,             
+                70,             10,
+
+  # Sorghum — not in Purdue 2023; placeholders (edit as needed)
+  "Sorghum",   0.2,          100,           110,         4.5,
+               50,            
+               75,             10
+)
+
+
+mix_crops <- c("Corn","Soybeans","Sorghum","Wheat")
+
+df_opt <- df_int_crop_areanorm %>%
+  left_join(crop_params, by = "Crop")
+
+
+
+```
+
+ - run wq model
+```{r}
+# --- 2) WQ CONTEXT + MODEL (log1p) -------------------------------------------
+df_nitrate <- read_csv(file.path("data","RiverNitrateData_EKSRB.csv"), show_col_types = FALSE)
+
+df_basin_input_forWQ <- df_basin_input_forWQ %>%
+  left_join(df_nitrate, by = "Year") %>%
+  subset(Year %in% yrs_common)
+
+# Percentile change as in training
+ec <- ecdf(df_basin_input_forWQ$Climate_precip_m)
+wq_context <- df_basin_input_forWQ %>%
+  arrange(Year) %>%
+  mutate(
+    precip_percentile       = ec(Climate_precip_m),
+    precip_percentileChange = tidyr::replace_na(precip_percentile - dplyr::lag(precip_percentile), 0)
+  )
+
+req_wq <- c(
+  "NitrateFlux_kg","LandCover_m2_developed","LandCover_m2_grassPastureHay",
+  "LandCover_m2_all cult","Climate_precip_m","Climate_Tmean_C",
+  "precip_percentileChange","Management_irrigation_m","Management_FertilizerUse_kgm2"
+)
+wq_train <- wq_context %>% tidyr::drop_na(dplyr::all_of(req_wq))
+
+# Use log1p model to enforce positivity at predict time
+wq_model_log1p <- lm(
+  log1p(NitrateFlux_kg) ~ LandCover_m2_developed + LandCover_m2_grassPastureHay + `LandCover_m2_all cult` +
+    Climate_precip_m + Climate_Tmean_C + precip_percentileChange +
+    Management_irrigation_m + Management_FertilizerUse_kgm2,
+  data = wq_train
+)
+summary(wq_model_log1p)
+
+
+
+```
+
+- LU grid
+```{r}
+# --- 3) MIX GENERATION + ECON AGG --------------------------------------------
+check_df_opt_year <- function(df_opt, Y) {
+  d <- dplyr::filter(df_opt, Year == Y)
+  req <- c("Year","Crop","Crop_prc","Yield_kgHa","NetReturn_ha","Irrigation_m",
+           "Crop_area_m2","Crop_area_ha","price_per_kg","seed_cost_ha","fert_kgHa")
+  missing_cols <- setdiff(req, names(d))
+  if (length(missing_cols)) stop("df_opt is missing columns: ", paste(missing_cols, collapse=", "))
+  invisible(d)
+}
+
+bounded_simplex_percent <- function(base_pct, lower_pct, upper_pct, step_pct = 1) {
+  crops <- c("Corn","Soybeans","Sorghum","Wheat")
+  seqs  <- lapply(crops, function(k) seq(lower_pct[[k]], upper_pct[[k]], by = step_pct))
+  names(seqs) <- crops
+  grd <- expand.grid(
+    Corn     = seqs$Corn, Soybeans = seqs$Soybeans,
+    Sorghum  = seqs$Sorghum, Wheat = seqs$Wheat,
+    KEEP.OUT.ATTRS = FALSE, stringsAsFactors = FALSE
+  )
+  grd <- subset(grd, abs(Corn + Soybeans + Sorghum + Wheat - 100) < 1e-6)
+  grd$MixID <- seq_len(nrow(grd))
+  tibble::as_tibble(grd)
+}
+
+
+
+
+evaluate_year_mixes_dfopt <- function(
+  df_opt, Y, bounds_pct = 0.25, step_pct = 1, universal_costs = NULL, crop_params = NULL
+) {
+  `%||%` <- function(a, b) if (is.null(a)) b else a
+
+  crops4 <- c("Corn","Soybeans","Sorghum","Wheat")
+
+  d <- df_opt %>%
+    filter(Year == Y, Crop %in% crops4) %>%
+    complete(
+      Year = Y, Crop = crops4,
+      fill = list(
+        Crop_prc = 0, Yield_kgHa = 0, NetReturn_ha = 0, Irrigation_m = 0,
+        Irrigation_m3 = 0, Crop_area_m2 = 0, Crop_area_ha = 0,
+        price_per_kg = 0, seed_cost_ha = 0, fert_kgHa = 0
+      )
+    ) %>%
+    mutate(
+      Crop = str_squish(as.character(Crop)),
+      Crop = case_when(
+        str_to_lower(Crop) %in% c("soybean","soybeans") ~ "Soybeans",
+        str_to_lower(Crop) == "sorgum"                  ~ "Sorghum",
+        TRUE ~ str_to_title(Crop)
+      )
+    )
+
+  # If Crop_prc already fraction, convert to percent
+  if (is.finite(max(d$Crop_prc, na.rm = TRUE)) && max(d$Crop_prc, na.rm = TRUE) <= 1.01)
+    d$Crop_prc <- d$Crop_prc * 100
+
+  base_tbl <- d %>%
+    group_by(Crop) %>%
+    summarise(Crop_prc = first(stats::na.omit(Crop_prc), default = 0), .groups = "drop")
+
+  base_pct <- setNames(rep(0, length(crops4)), crops4)
+  mi <- match(crops4, base_tbl$Crop); ok <- !is.na(mi)
+  base_pct[ok] <- base_tbl$Crop_prc[mi[ok]]
+
+  lower_pct <- pmax(0,   base_pct - 100 * bounds_pct); names(lower_pct) <- crops4
+  upper_pct <- pmin(100, base_pct + 100 * bounds_pct); names(upper_pct) <- crops4
+
+  grid <- bounded_simplex_percent(base_pct, lower_pct, upper_pct, step_pct)
+  if (nrow(grid) == 0) return(tibble::tibble())
+
+  # Per-ha performance pulled from df_opt
+  perha <- d %>% dplyr::select(Crop, Yield_kgHa, NetReturn_ha, Irrigation_m,
+                               price_per_kg, seed_cost_ha, fert_kgHa)
+
+  # If crop_params supplied, join them to provide/override per-ha costs (flexible)
+  if (!is.null(crop_params)) {
+    # Avoid .x/.y suffixes; keep df_opt's perf, augment with missing cost cols
+    perha <- perha %>%
+      dplyr::select(-any_of(setdiff(names(crop_params), "Crop"))) %>%
+      left_join(crop_params, by = "Crop")
+  }
+
+  # Create missing cost columns first so mutate() never fails
+for (nm in c("price_per_kg", "seed_cost_ha", "fert_kgHa", "fert_price_per_kg",
+             "herb_pest_cost_ha", "other_variable_costs_ha", "crop_insurance_ha")) {
+  if (!nm %in% names(perha)) perha[[nm]] <- 0
+}
+
+# Now safely coalesce to handle any NAs
+perha <- perha %>%
+  mutate(
+    price_per_kg            = coalesce(price_per_kg, 0),
+    seed_cost_ha            = coalesce(seed_cost_ha, 0),
+    fert_kgHa               = coalesce(fert_kgHa, 0),
+    fert_price_per_kg       = coalesce(fert_price_per_kg, 0),
+    herb_pest_cost_ha       = coalesce(herb_pest_cost_ha, 0),
+    other_variable_costs_ha = coalesce(other_variable_costs_ha, 0),
+    crop_insurance_ha       = coalesce(crop_insurance_ha, 0)
+  )
+
+  cult_ha <- sum(d$Crop_area_ha, na.rm = TRUE)
+  cult_m2 <- sum(d$Crop_area_m2, na.rm = TRUE)
+
+  mixes_long <- grid %>%
+    pivot_longer(all_of(crops4), names_to = "Crop", values_to = "Crop_prc_new") %>%
+    mutate(frac = Crop_prc_new / 100) %>%
+    left_join(perha, by = "Crop") %>%
+    mutate(
+      area_alloc_ha = cult_ha * frac,
+      area_alloc_m2 = cult_m2 * frac
+    )
+
+  # Summarize to mix-level totals. NOTE: Irrigation_m is depth (m); depth * area(m2) = m3
+  agg <- mixes_long %>%
+    group_by(MixID) %>%
+    summarise(
+      Year            = Y,
+      Yield_kgHa_mix  = sum(frac * Yield_kgHa, na.rm = TRUE),
+
+      Irr_m3_total    = sum(Irrigation_m * area_alloc_m2, na.rm = TRUE),
+      Fert_kg_total   = sum(fert_kgHa   * area_alloc_ha,  na.rm = TRUE),
+
+      # Revenue & costs (totals)
+      Revenue_total   = sum(price_per_kg * Yield_kgHa * area_alloc_ha,         na.rm = TRUE),
+      Seed_total      = sum(seed_cost_ha * area_alloc_ha,                      na.rm = TRUE),
+      Fert_total      = sum((fert_kgHa * fert_price_per_kg +
+                             (universal_costs %||% list())$fert_app_cost_ha %||% 0) * area_alloc_ha, na.rm = TRUE),
+      HerbPest_total  = sum(herb_pest_cost_ha       * area_alloc_ha,           na.rm = TRUE),
+      OtherVar_total  = sum(other_variable_costs_ha * area_alloc_ha,           na.rm = TRUE),
+      CropIns_total   = sum(crop_insurance_ha       * area_alloc_ha,           na.rm = TRUE),
+
+      Irr_m3Ha_mix    = if (cult_ha > 0) Irr_m3_total / cult_ha else NA_real_,
+      Corn            = sum(frac[Crop == "Corn"]),
+      Soybeans        = sum(frac[Crop == "Soybeans"]),
+      Sorghum         = sum(frac[Crop == "Sorghum"]),
+      Wheat           = sum(frac[Crop == "Wheat"]),
+      CultArea_ha     = cult_ha,
+      CultArea_m2     = cult_m2,
+      .groups = "drop"
+    )
+
+  # Add irrigation cost and NR using new cost structure
+  if (!is.null(universal_costs)) {
+    irr_cost_total <- (universal_costs$irr_cost_per_m3 %||% 0) * agg$Irr_m3_total
+
+    agg <- agg %>%
+      mutate(
+        NR_total = Revenue_total - (Seed_total + Fert_total + HerbPest_total +
+                                    OtherVar_total + CropIns_total + irr_cost_total),
+        
+        NetReturn_ha_mix = NR_total / if_else(CultArea_ha > 0, CultArea_ha, NA_real_) )
+        
+  } else {
+    agg$NetReturn_ha_mix <- NA_real_
+  }
+
+  agg
+}
+```
+
+```{r}
+# --- 4) PREDICTOR BUILD HELPERS ----------------------------------------------
+build_basin_area_tbl <- function(df_basin_input_forWQ){
+  df_basin_input_forWQ %>%
+    mutate(BasinArea_m2 = `LandCover_m2_all cult` + LandCover_m2_grassPastureHay + LandCover_m2_developed) %>%
+    dplyr::select(
+      Year, BasinArea_m2, Climate_precip_m, Climate_Tmean_C,
+      `LandCover_m2_all cult`, LandCover_m2_grassPastureHay, LandCover_m2_developed
+    ) %>%
+    distinct(Year, .keep_all = TRUE)
+}
+
+make_pred_inputs <- function(mix_df, basin_area_tbl, wq_context){
+  mix_df %>%
+    left_join(basin_area_tbl, by = "Year") %>%
+    mutate(
+      Management_irrigation_m       = if_else(CultArea_m2 > 0, Irr_m3_total / CultArea_m2, NA_real_),
+      Management_FertilizerUse_kgm2 = if_else(CultArea_m2 > 0, Fert_kg_total / CultArea_m2, NA_real_)
+    ) %>%
+    left_join(wq_context %>% dplyr::select(Year, precip_percentileChange) %>% distinct(), by = "Year") %>%
+    dplyr::select(
+      Year,
+      LandCover_m2_developed,
+      LandCover_m2_grassPastureHay,
+      `LandCover_m2_all cult`,
+      Climate_precip_m,
+      Climate_Tmean_C,
+      precip_percentileChange,
+      Management_irrigation_m,
+      Management_FertilizerUse_kgm2
+    )
+}
+
+add_nitrate_predictions <- function(mix_df, wq_model_log1p, basin_area_tbl, wq_context){
+  newdata <- make_pred_inputs(mix_df, basin_area_tbl, wq_context)
+  pred_log1p <- as.numeric(predict(wq_model_log1p, newdata = newdata))
+  mix_df %>% mutate(NitrateFluxPredicted_kg = pmax(0, exp(pred_log1p) - 1))
+}
+
+```
+
+```{r}
+#5) SINGLE-YEAR SMOKE TEST (optional) 
+check_df_opt_year(df_opt, 2019)
+res_Y <- evaluate_year_mixes_dfopt(df_opt, Y = 2019, bounds_pct = 0.25, step_pct = 1, universal_costs = universal_costs)
+
+basin_area_tbl <- build_basin_area_tbl(df_basin_input_forWQ)
+pred_in_Y <- make_pred_inputs(res_Y, basin_area_tbl, wq_context)  # for range checks if desired
+res_Y <- add_nitrate_predictions(res_Y, wq_model_log1p, basin_area_tbl, wq_context)
+
+ggplot(res_Y, aes(NitrateFluxPredicted_kg, NetReturn_ha_mix, color = Corn)) +
+  geom_point(alpha = 0.6) +
+  scale_color_viridis_c(name = "Crop %") +
+  labs(title = "Annual Mixes", x = "Nitrate (kg/yr)", y = "Net Return ($/ha)") +
+  theme_minimal()
+
+```
+
+```{r}
+# --- 6) ALL YEARS + FRONTIERS -------------------------------------------------
+years <- sort(unique(df_opt$Year))
+eval_list <- purrr::map(years, ~evaluate_year_mixes_dfopt(df_opt, Y = .x, bounds_pct = 0.25, step_pct = 1, universal_costs = universal_costs))
+mix_results <- dplyr::bind_rows(eval_list)
+
+basin_area_tbl <- build_basin_area_tbl(df_basin_input_forWQ)
+mix_results    <- add_nitrate_predictions(mix_results, wq_model_log1p, basin_area_tbl, wq_context)
+
+epsilon <- 1e-12
+pareto_frontier <- function(df, nitrate_col = "NitrateFluxPredicted_kg",
+                            value_col = "NetReturn_ha_mix", tol_rel = 0.002) {
+  d <- df %>%
+    dplyr::filter(is.finite(.data[[nitrate_col]]), is.finite(.data[[value_col]])) %>%
+    dplyr::arrange(.data[[nitrate_col]], dplyr::desc(.data[[value_col]])) %>%
+    dplyr::mutate(bin = floor(.data[[nitrate_col]] / (tol_rel * max(.data[[nitrate_col]], na.rm=TRUE) + epsilon))) %>%
+    dplyr::group_by(bin) %>% dplyr::slice_max(order_by = .data[[value_col]], n = 1, with_ties = FALSE) %>% dplyr::ungroup() %>%
+    dplyr::arrange(.data[[nitrate_col]]) %>% dplyr::mutate(cum_best = cummax(.data[[value_col]])) %>% dplyr::filter(.data[[value_col]] >= cum_best) %>%
+    dplyr::select(-bin, -cum_best)
+  d
+}
+
+frontiers_by_year <- mix_results %>% dplyr::group_by(Year) %>% dplyr::group_modify(~ pareto_frontier(.x)) %>% dplyr::ungroup()
+frontier_overall  <- pareto_frontier(mix_results)
+
+```
+
+```{r}
+# --- 7) PLOTS -----------------------------------------------------------------
+p_year <- ggplot(mix_results,
+       aes(NitrateFluxPredicted_kg, NetReturn_ha_mix)) +
+  geom_point(aes(fill = Soybeans, size = Corn),
+             stroke = 0.2, shape = 21, alpha = 0.5) +
+  scale_fill_viridis_c(name = "Soybeans %") +
+  scale_size_continuous(name = "Corn %") +
+#  scale_shape_discrete(name = "Wheat % bin") +
+ # scale_alpha_continuous(name = "Sorghum %", range = c(0.25, 1), guide = "none") +
+  facet_wrap(~Year, scales = "free") +
+  labs(x = "Nitrate load (kg/yr)", y = "Net return ($/ha)") +
+  theme_minimal(base_size = 12)
+p_year
+
+p_overall <- ggplot(mix_results,
+                    aes(NitrateFluxPredicted_kg, NetReturn_ha_mix)) +
+  #geom_point(alpha = 0.25, size = 1.2) +
+  #geom_path(data = frontier_overall,
+       #     aes(NitrateFluxPredicted_kg, NetReturn_ha_mix),
+       #     linewidth = 1.2) +
+  geom_smooth(data = frontier_overall,
+            aes(NitrateFluxPredicted_kg, NetReturn_ha_mix),
+            linewidth = 1.2) + 
+  labs(title = "Overall Pareto Frontier",
+       x = "Nitrate load (kg/yr)",
+       y = "Net return ($/ha)") +
+  theme_minimal(base_size = 12)
+
+
+p_overall
+```
+
+
+ - need this to be clearly explained (i.e. why is there an offset with point and frontier?)
+```{r}
+# ---- Knee detection on a single frontier (data.frame) ----
+# df must contain columns xcol (e.g., NitrateFluxPredicted_kg) and ycol (e.g., NetReturn_ha_mix)
+knee_by_max_distance <- function(df, xcol = "NitrateFluxPredicted_kg", ycol = "NetReturn_ha_mix") {
+  d <- df[order(df[[xcol]], df[[ycol]], decreasing = c(FALSE, TRUE)), , drop = FALSE]
+  if (nrow(d) < 3) return(d[0, , drop = FALSE])
+
+  # endpoints
+  x1 <- d[[xcol]][1];    y1 <- d[[ycol]][1]
+  x2 <- d[[xcol]][nrow(d)]; y2 <- d[[ycol]][nrow(d)]
+
+  # perpendicular distance from each point to the chord
+  num <- abs((y2 - y1)*d[[xcol]] - (x2 - x1)*d[[ycol]] + x2*y1 - y2*x1)
+  den <- sqrt((y2 - y1)^2 + (x2 - x1)^2)
+  dist <- if (den > 0) num / den else rep(0, nrow(d))
+
+  d$._knee_distance <- dist
+  d[which.max(d$._knee_distance), , drop = FALSE]
+}
+
+# ---- Knees for every Year on your existing frontiers_by_year ----
+# frontiers_by_year should be the tibble of per-year frontier points (includes Year, MixID, etc.)
+knees_by_year <- frontiers_by_year %>%
+  group_by(Year) %>%
+  group_modify(~ knee_by_max_distance(.x)) %>%
+  ungroup()
+
+# Add knee markers to the faceted per-year plot
+p_year +
+  geom_point(data = knees_by_year,
+             aes(NitrateFluxPredicted_kg, NetReturn_ha_mix),
+             inherit.aes = FALSE, size = 2.2, stroke = 0.8,
+             shape = 21, fill = "white", color = "black")
+
+
+```
+
+```{r}
+# 3a) Build predictor rows for every mix (same helper you already use)
+pred_all <- make_pred_inputs(mix_results, basin_area_tbl, wq_context)
+
+# 3b) Attach MixID/Year so we can match back (ensure ordering aligns)
+pred_all$Year  <- mix_results$Year
+pred_all$MixID <- mix_results$MixID
+
+# 3c) Extract driver conditions at knee points
+drivers <- c("Climate_precip_m","Climate_Tmean_C","precip_percentileChange",
+             "Management_irrigation_m","Management_FertilizerUse_kgm2",
+             "LandCover_m2_developed","LandCover_m2_grassPastureHay","LandCover_m2_all cult")
+
+knee_conditions <- knees_by_year %>%
+  dplyr::select(Year, MixID, NitrateFluxPredicted_kg, NetReturn_ha_mix) %>%
+  left_join(pred_all %>% dplyr::select(Year, MixID, dplyr::all_of(drivers)),
+                   by = c("Year","MixID"))
+
+# 3d) Quick table: knee vs year mean (delta)
+knee_vs_year <- pred_all %>%
+  group_by(Year) %>%
+  summarise(dplyr::across(all_of(drivers), ~mean(.x, na.rm=TRUE), .names = "year_mean_{.col}"),
+                   .groups = "drop") %>%
+  left_join(knee_conditions, by = "Year") %>%
+  pivot_longer(cols = all_of(drivers),
+                      names_to = "driver", values_to = "knee_value") %>%
+  pivot_longer(cols = starts_with("year_mean_"),
+                      names_to = "avg_name", values_to = "year_mean") %>%
+  filter(sub("year_mean_", "", avg_name) == driver) %>%
+  transmute(Year, driver, knee_value, year_mean, delta = knee_value - year_mean)
+
+# 3e) Lollipop deltas (per year) or averaged across years
+
+# per-year small multiples
+ggplot(knee_vs_year, aes(x = reorder(driver, delta), y = delta)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_segment(aes(xend = driver, y = 0, yend = delta)) +
+  geom_point(size = 2) +
+  coord_flip() +
+  #facet_wrap(~Year, ncol = 4, scales = "free_y") +
+  labs(title = "Knee conditions vs. year mean", x = NULL, y = "Δ (knee − year mean)") +
+  theme_minimal(base_size = 12)
+
+# pooled view (which drivers systematically differ at knees?)
+knee_delta_pooled <- knee_vs_year %>%
+  group_by(driver) %>%
+  summarise(mean_delta = mean(delta, na.rm = TRUE),
+                   sd_delta   = sd(delta,   na.rm = TRUE),
+                   .groups = "drop") %>%
+  arrange(desc(abs(mean_delta)))
+
+ggplot(knee_delta_pooled, aes(x = reorder(driver, mean_delta), y = mean_delta)) +
+  geom_hline(yintercept = 0, linetype = "dashed") +
+  geom_errorbar(aes(ymin = mean_delta - sd_delta, ymax = mean_delta + sd_delta), width = 0) +
+  geom_point(size = 2) +
+  coord_flip() +
+  labs(title = "Average knee – mean difference (across years)",
+       x = NULL, y = "Δ mean (knee − year mean)") +
+  theme_minimal(base_size = 12)
+
+```
+
+```{r}
+knee_mix_comp <- mix_results %>%
+  dplyr::select(Year, MixID, Corn, Soybeans, Sorghum, Wheat) %>%
+  inner_join(knees_by_year %>% dplyr::select(Year, MixID), by = c("Year","MixID")) %>%
+  pivot_longer(c(Corn, Soybeans, Sorghum, Wheat), names_to = "Crop", values_to = "Frac")
+
+ggplot(knee_mix_comp, aes(x = Crop, y = Frac, fill = Crop)) +
+  geom_col(width = 0.75) +
+  scale_y_continuous(labels = percent_format(accuracy = 1)) +
+  facet_wrap(~Year, ncol = 6) +
+  labs(title = "Crop composition at the knee (per year)", x = NULL, y = "Fraction of cultivated area") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+
+
+
+
+
+# 1) Gather knee compositions (one row per knee-year x crop)
+knee_mix_comp <- mix_results %>%
+  dplyr::select(Year, MixID, Corn, Soybeans, Sorghum, Wheat) %>%
+  inner_join(knees_by_year %>% dplyr::select(Year, MixID),
+                    by = c("Year","MixID")) %>%
+  pivot_longer(c(Corn, Soybeans, Sorghum, Wheat),
+                      names_to = "Crop", values_to = "Frac")
+
+# 2A) Unweighted average across years (with SE bars)
+avg_comp <- knee_mix_comp %>%
+  group_by(Crop) %>%
+  summarise(
+    mean_frac = mean(Frac, na.rm = TRUE),
+    sd_frac   = sd(Frac,   na.rm = TRUE),
+    n         = dplyr::n(),
+    se_frac   = sd_frac / sqrt(n),
+    .groups   = "drop"
+  )
+
+ggplot(avg_comp, aes(x = reorder(Crop, mean_frac), y = mean_frac, fill = Crop)) +
+  geom_col(width = 0.75) +
+  geom_errorbar(aes(ymin = pmax(0, mean_frac - se_frac),
+                    ymax = pmin(1, mean_frac + se_frac)),
+                width = 0.2) +
+  scale_y_continuous(labels = percent_format(accuracy = 1), limits = c(0,1)) +
+  labs(title = "Average crop composition at the knee (all years)",
+       x = NULL, y = "Fraction of cultivated area") +
+  theme_minimal(base_size = 12) +
+  theme(legend.position = "none")
+
+# 2B) OPTIONAL: Area-weighted average (weights = cultivated area at that knee)
+avg_comp_weighted <- knee_mix_comp %>%
+  left_join(
+    mix_results %>%
+      select(Year, MixID, CultArea_m2) %>%
+      inner_join(knees_by_year %>% select(Year, MixID), by = c("Year","MixID")),
+    by = c("Year","MixID")
+  ) %>%
+  group_by(Crop) %>%
+  summarise(weighted_mean_frac = weighted.mean(Frac, w = CultArea_m2, na.rm = TRUE),
+            .groups = "drop")
+
+# View the weighted means (use in place of avg_comp$mean_frac if preferred)
+avg_comp_weighted
+```
+
+

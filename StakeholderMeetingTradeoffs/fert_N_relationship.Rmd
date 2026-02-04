@@ -1,0 +1,107 @@
+---
+title: "Fertilzier-N reduction relationship"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+years_curr <- 2006:2023
+
+df_basin_input_forWQ <- read_csv(here("data/common_inputs_basin.csv"), show_col_types = FALSE) %>%
+  mutate(Management_FertilizerUse_kgm2 = Management_FertilizerUse_kg / `LandCover_m2_all cult`)
+
+WQtraining <- read_csv(here("data/RiverNitrateData_EKSRB.csv"))
+                       
+ 
+gamma_table <- df_basin_input_forWQ %>% left_join(WQtraining) %>% filter(Year %in% years_curr)
+
+head(gamma_table)
+                      
+```
+
+1) Prepare the calibration dataset (build the exact predictors your WQ model expects)
+```{r}
+# 1) Build the WQ predictors and N0 (no-fert baseline)
+df_cal <- gamma_table %>%
+  mutate(
+    # Basin area + fractions (consistent with your model)
+    BasinArea_m2 = `LandCover_m2_all cult` + LandCover_m2_grassPastureHay + LandCover_m2_developed,
+    dev_frac  = LandCover_m2_developed / BasinArea_m2,
+    cult_frac = `LandCover_m2_all cult` / BasinArea_m2
+  ) %>%
+  arrange(Year)
+
+# 2) Add precip percentile change (must match your training construction)
+ec <- ecdf(df_cal$Climate_precip_m)
+df_cal <- df_cal %>%
+  mutate(
+    precip_percentile       = ec(Climate_precip_m),
+    precip_percentileChange = coalesce(precip_percentile - lag(precip_percentile), 0)
+  )
+
+# 3) Compute baseline prediction N0 from the no-fert model
+df_cal <- df_cal %>%
+  mutate(
+    N0 = pmax(0, as.numeric(predict(wq_model_mlr, newdata = .)))
+  )
+
+# 4) Join fertilizer reference (baseline) and compute ratio r
+df_cal <- df_cal %>%
+  left_join(fert_ref_by_year %>% select(Year, Fert_ref_kg), by = "Year") %>%
+  mutate(
+    Fert_obs_kg = Management_FertilizerUse_kg,
+    r = Fert_obs_kg / Fert_ref_kg
+  )
+
+
+df_cal %>% summarise(
+  n = n(),
+  any_na = any(is.na(NitrateFlux_kg) | is.na(N0) | is.na(r)),
+  r_min = min(r, na.rm=TRUE),
+  r_max = max(r, na.rm=TRUE),
+  N0_min = min(N0, na.rm=TRUE),
+  N0_max = max(N0, na.rm=TRUE)
+)
+
+```
+2) Fit gamma (elasticity) using log-ratio regression
+```{r}
+eps <- 1e-6
+
+fit_dat <- df_cal %>%
+  filter(is.finite(NitrateFlux_kg), is.finite(N0), is.finite(r),
+         NitrateFlux_kg > 0, N0 > 0, r > 0) %>%
+  mutate(
+    y = log((NitrateFlux_kg + eps) / (N0 + eps)),
+    x = log(r)
+  )
+
+# Fit through the origin (recommended: if r=1, multiplier should be 1 -> y=0)
+fit_gamma <- lm(y ~ 0 + x, data = fit_dat)
+
+summary(fit_gamma)
+gamma_hat <- coef(fit_gamma)[["x"]]
+gamma_hat
+
+
+ggplot(fit_dat, aes(x, y)) +
+  geom_point() +
+  geom_abline(slope = gamma_hat, intercept = 0)
+```
+
+
+3) Quantify uncertainty (bootstrap across years)
+```{r}
+set.seed(1)
+B <- 2000
+
+gammas <- replicate(B, {
+  samp <- fit_dat %>% slice_sample(n = n(), replace = TRUE)
+  coef(lm(y ~ 0 + x, data = samp))[["x"]]
+})
+
+quantile(gammas, c(0.1, 0.5, 0.9), na.rm = TRUE)
+quantile(gammas, c(0.025, 0.975), na.rm = TRUE)
+```
+

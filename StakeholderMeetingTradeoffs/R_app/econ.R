@@ -2,7 +2,8 @@ library(dplyr)
 library(tibble)
 
 universal_costs <- list(
-  irr_cost_per_m3 = 0.029
+  irr_cost_per_m3 = 0.029,
+  fert_share_direct = 0.2
 )
 
 crop_params <- tribble(
