@@ -306,12 +306,23 @@ ggsave(file.path("figures", "Nflux_ObsVsPred_training.png"),
 
 df_wq_aug %>% 
  mutate(resid_m = NitrateFlux_kg - NitrateFluxPredicted_kg) %>%
-  ggplot(aes(x = NitrateFluxPredicted_kg, y = resid_m)) + #irr_pred_m, FIPS, precip_m, tmax_C_avg, Year
+  ggplot(aes(x = Climate_precip_m, y = resid_m)) + #irr_pred_m, Climate_precip_m, Climate_Tmean_C, Year
   geom_point(alpha = 0.6) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "red") +
-  labs(x = "Predicted N flux", y = "Residual (obs - pred)",
+  labs(x = "Climate_precip_m", y = "Residual (obs - pred)",
        title = "Residuals vs prediction") +
   theme_test(base_size = 15)
+ggsave(file.path("figures", "Nflux_Resid_Ppt.png"),
+       width = 130, height = 120, units = "mm", dpi = 300)
+
+df_wq_aug%>% summarise(bias = mean( NitrateFluxPredicted_kg- NitrateFlux_kg))
+
+actual <- df_wq_aug$NitrateFlux_kg
+predicted <- df_wq_aug$NitrateFluxPredicted_kg
+bias(predicted, actual)
+
+rmse(df_wq_aug$NitrateFluxPredicted_kg, df_wq_aug$NitrateFlux_kg)
+
 
 ```
  

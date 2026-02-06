@@ -25,12 +25,12 @@ ui <- fluidPage(
             hr(),
             verbatimTextOutput("share_check"),
             
-            sliderInput("cult_area_pct", "Cultivated area change (%)", min = -20, max = 20, value = 0, step = 1),
+            sliderInput("cult_area_pct", "Cultivated area change (%)", min = -30, max = 30, value = 0, step = 1),
             
-            sliderInput("irr_area_pct", "Irrigated area change (%)", min = -50, max = 50, value = 0, step = 1),
-            sliderInput("irr_eff_pct", "Irrigation efficiency (%)", min = 0, max = 20, value = 0, step = 1),
+            sliderInput("irr_area_pct", "Irrigated area change (%)", min = -30, max = 30, value = 0, step = 1),
+            sliderInput("irr_eff_pct", "Irrigation efficiency (%)", min = -10, max = 20, value = 0, step = 1),
             
-            sliderInput("fert_pct", "Fertilizer efficiency (%)", min = -30, max = 20, value = 0, step = 1),
+            sliderInput("fert_pct", "Fertilizer efficiency (%)", min = -10, max = 20, value = 0, step = 1),
             
             
         ),
@@ -38,7 +38,7 @@ ui <- fluidPage(
           h4("Model outputs"),
           verbatimTextOutput("eval_out"),
           hr(),
-          h4("% improvement over baseline"),
+          h4("% change over baseline"),
           plotOutput("pct_bar", height = 380)
         )
     ) 
@@ -154,31 +154,66 @@ server <- function(input, output, session) {
       out
     })   
     
-    output$pct_bar <- renderPlot({
+    output$pct_bar <- output$pct_bar <- renderPlot({
+      
       pct <- pct_res()
       validate(need(all(is.finite(pct)), "Percent change not available (check baseline/scenario values)."))
       
+      # Convert raw % changes into "progress toward goals" (% improvement)
       df <- data.frame(
-        metric = c("Nitrate flux", "Net returns", "Irrigation volume"),
-        pct = c(pct["n_flux_pct"], pct["profit_pct"], pct["irr_pct"])
+        metric = c("Nitrate flux", "Net returns", "Irrigation use"),
+        change_pct = c(pct["n_flux_pct"], pct["profit_pct"], pct["irr_pct"]),
+        improve_pct = c(-pct["n_flux_pct"], pct["profit_pct"], -pct["irr_pct"])
       )
       
-      op <- par(mar = c(10, 4, 2, 1),   xpd = NA)  # room for x labels
+      # Fixed y-axis so plot doesn't re-scale when sliders move
+      ylim_fixed <- c(-30, 30)   # <- adjust once for your meeting
+      
+      # Blue = toward goals, Red = away from goals
+      bar_cols <- ifelse(
+        df$improve_pct > 0.1, "dodgerblue3",
+        ifelse(df$improve_pct < -0.1, "firebrick2", "gray70")
+      )
+      
+      op <- par(
+        mar = c(11, 5, 3, 1),  # big bottom margin for rotated labels
+        xpd = NA               # prevent label clipping
+      )
       on.exit(par(op), add = TRUE)
       
       bp <- barplot(
-        height = df$pct,
+        height = df$change_pct,            # plot true % change vs baseline
         names.arg = df$metric,
-        ylab = "% improvement over baseline",
+        ylab = "% change vs baseline",
         las = 2,
-        cex.names = 1.25,
+        col = bar_cols,
+        border = NA,
+        ylim = ylim_fixed,
+        cex.names = 1.2,
         cex.axis  = 1.15,
-        cex.lab   = 1.3
+        cex.lab   = 1.2
       )
       
-      abline(h = 0)
-     # text(bp, df$pct, labels = sprintf("%+.1f%%", df$pct), pos = ifelse(df$pct >= 0, 3, 1), cex = 1.1)
+      abline(h = 0, lwd = 1.2)
+      
+      # bar labels (show % change)
+      text(
+        bp, df$change_pct,
+        labels = sprintf("%+.1f%%", df$change_pct),
+        pos = ifelse(df$change_pct >= 0, 3, 1),
+        cex = 1.05
+      )
+      
+      # tiny legend (optional but helpful)
+      legend(
+        "topright",
+        legend = c("Toward goals", "Away from goals"),
+        fill = c("dodgerblue3", "firebrick2"),
+        bty = "n",
+        cex = 1.0
+      )
     })
+    
     
     
     
