@@ -206,8 +206,8 @@ server <- function(input, output, session) {
       
       # tiny legend (optional but helpful)
       legend(
-        "topright",
-        legend = c("Toward goals", "Away from goals"),
+        "topleft",
+        legend = c("Improvement over baseline", "Decline over baseline"),
         fill = c("dodgerblue3", "firebrick2"),
         bty = "n",
         cex = 1.0

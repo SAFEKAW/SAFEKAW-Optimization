@@ -1,3 +1,12 @@
+
+if (!requireNamespace("pacman", quietly = TRUE)) {
+  install.packages("pacman")
+}
+library(pacman)
+p_load(dplyr, tibble, here)
+
+
+
 library(dplyr)
 library(tibble)
 library(here)
