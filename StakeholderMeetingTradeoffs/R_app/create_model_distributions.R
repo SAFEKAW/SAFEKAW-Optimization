@@ -5,12 +5,18 @@ source('StakeholderMeetingTradeoffs/global.R')
 # create samples ----------------------------------------------------------
 require(lhs)
 
+#initial number of samples to try... most won't work bc of crop cover constraint
 n_samples_init <- 20000
+#generate initial latin hypercube
 lhs_init <- randomLHS(n_samples_init,7)
+#add up crop cover amounts to check which samples violate constraint
 share_sums <- rowSums(lhs_init[,1:3])
+#trim the cube of an violating samples
 lhs_trim <- lhs_init[share_sums <= 1,]
+#report number of samples that are going through to next step
 n_samples <- nrow(lhs_trim)
 
+#get input variable ranges for scaling the hypercube output (range [0 1]) to actual sample space
 ranges <- list(
   corn_range <- 0:100,
   soy_range <- 0:100,
@@ -20,22 +26,25 @@ ranges <- list(
   irr_area_range <- -30:30,
   irr_eff_range <- -10:10
 )
-
 range_mins <- sapply(ranges, min)
 range_lengths <- sapply(ranges, length)-1
 
+#scale the hypercube to the variable ranges and add the mins, then name the cols
 samples_scale <- lhs_trim * range_lengths[col(lhs_trim)]
 samples <- samples_scale + range_mins[col(samples_scale)]
 colnames(samples) <- c('corn', 'soy', 'sor', 'cult_area', 'fert_eff', 'irr_area', 'irr_eff')
 
+#report how many samples we have and how long it will take to run through model
 print(paste0(n_samples,'/',n_samples_init,' samples retained'))
 #benchmarks suggested that the model takes about 300ms to run, or 3x per second
 print(paste('Est. time to run:', round(n_samples/3/60), 'minutes'))
 
 # run samples through model -----------------------------------------------
+#set up output data frame with the input data for each sample
 sample_summary <- data.frame(sample = 1:nrow(samples)) %>%
   cbind(samples)
 
+#Same evaluation function that is used in the app
 eval_sample <- function(s){
   x <- c(s['corn'], s['soy'], s['sor'])/100
   
@@ -68,8 +77,10 @@ eval_sample <- function(s){
   names(out) <- c('n','prof','irr')
   return(out)
 }
+#apply the function to each row of the sample matrix
 model_output <- t(apply(samples,1,eval_sample))
 
+#and add the output to the summary data frame
 sample_summary <- cbind(sample_summary, model_output)
 
 #save the results if wanted
@@ -80,14 +91,18 @@ sample_summary <- cbind(sample_summary, model_output)
 #read in previous results if wanted
 # sample_summary <- read_csv('StakeholderMeetingTradeoffs/sample_summary.csv')
 
+#run baseline data through the model
 baseline_sample <- c(obs_x*100,0,0,0,0)
 names(baseline_sample) <- colnames(samples)
 baseline_output <- eval_sample(baseline_sample)
 
 #nitrate
+#get distribution
 n_dist <- ecdf(sample_summary$n)
+#and calculate where the baseline nitrate output exists on it
 n_baseline_pct <- n_dist(baseline_output['n'])
 
+#plot it up
 plot(n_dist, ann = F)
 abline(h = n_baseline_pct, col = 'red', lty = 'dashed')
 abline(v = baseline_output['n'], col = 'red', lty = 'dashed')
@@ -95,7 +110,8 @@ title(main = paste0('Baseline Nitrate: ',round(n_baseline_pct,3)*100,'th percent
       ylab = 'Percentile',
       xlab = 'N Export')
 
-#profits
+
+#profit
 prof_dist <- ecdf(sample_summary$prof)
 prof_baseline_pct <- prof_dist(baseline_output['prof'])
 
@@ -105,6 +121,7 @@ abline(v = baseline_output['prof'], col = 'red', lty = 'dashed')
 title(main = paste0('Baseline Profits: ',round(prof_baseline_pct,3)*100,'th percentile'),
       ylab = 'Percentile',
       xlab = 'Net Profits')
+
 
 #irrigation
 irr_dist <- ecdf(sample_summary$irr)
@@ -117,7 +134,8 @@ title(main = paste0('Baseline Irrigation: ',round(irr_baseline_pct,3)*100,'th pe
       ylab = 'Percentile',
       xlab = 'Irrigation Use')
 
-
+#convert the percentiles to a normalized score for each output variable that
+#sums to 1 for ternary plotting
 pct_sum <- (1-n_baseline_pct) + prof_baseline_pct + (1-irr_baseline_pct)
 
 (1-n_baseline_pct)/pct_sum
