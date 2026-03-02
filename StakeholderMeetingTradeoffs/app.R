@@ -167,7 +167,7 @@ server <- function(input, output, session) {
       )
       
       # Fixed y-axis so plot doesn't re-scale when sliders move
-      ylim_fixed <- c(-30, 30)   # <- adjust once for your meeting
+      ylim_fixed <- c(-60, 60)   # <- adjust once for your meeting
       
       # Blue = toward goals, Red = away from goals
       bar_cols <- ifelse(
@@ -176,7 +176,7 @@ server <- function(input, output, session) {
       )
       
       op <- par(
-        mar = c(11, 5, 3, 1),  # big bottom margin for rotated labels
+        mar = c(10, 3, 3, 10),  # big bottom margin for rotated labels
         xpd = NA               # prevent label clipping
       )
       on.exit(par(op), add = TRUE)

@@ -141,7 +141,7 @@ p_wp <- ggplot(df_combo_aug, aes(x = totalWater_m, y = yield_kgHa_detrended)) +
   facet_wrap(~ Crop, scales = "free_y") +
   labs(x = "Precipitation + Irrigation (m)", y = "Yield (kg/ha)",
        title = "Water–Productivity Curves (modeled irrigation)") +
-  geom_line(aes(y = yield_kgHa_detrended_fit), color = "grey40", linewidth = 0.7, alpha = 0.6) +
+  #geom_line(aes(y = yield_kgHa_detrended_fit), color = "grey40", linewidth = 0.7, alpha = 0.6) +
   stat_smooth(method = "lm", formula = y ~ poly(x, 2), color = "black") +
   theme_test(base_size = 12) + theme(legend.position = "bottom")
 #ggsave(file.path("..", "Crop_WaterProductivity_byCrop.png"), p_wp, width = 8, height = 6, dpi = 300)
@@ -324,6 +324,7 @@ bias(predicted, actual)
 rmse(df_wq_aug$NitrateFluxPredicted_kg, df_wq_aug$NitrateFlux_kg)
 
 
+
 ```
  
  
@@ -355,7 +356,7 @@ df_combo_NR <- compute_net_returns(df_combo_aug, crop_params, universal_costs)
  - aggregating at the two scales and visualizing
 ```{r}
 # --- Basin per-year, per-crop (per-ha) summary from df_combo_NR ---
-crop_basin_perha <- df_combo_NR %>%
+crop_basin_perha <- df_combo_NR %>% mutate(Year = as.numeric(Year)) %>%
   group_by(Year, Crop) %>%
   summarise(
     Crop_area_m2 = sum(area_m2), 
