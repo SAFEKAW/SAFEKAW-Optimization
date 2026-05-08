@@ -1,0 +1,6 @@
+name: hist_baseline
+source: historical
+years:
+  start: 2006
+  end: 2024
+description: Observed historical baseline climate

@@ -1,0 +1,12 @@
+name: bau
+mode: linear_expansion
+annual_increment:
+  type: fraction_of_baseline
+  value: 0.01
+new_area_allocation:
+  corn: 0.43
+  soybean: 0.52
+  sorghum: 0.02
+  wheat: 0.03
+cap_rule: cultivated_plus_grass
+description: BAU cultivated expansion with new area dominated by corn and soybean, Add 1% of starting cultivated area each year.

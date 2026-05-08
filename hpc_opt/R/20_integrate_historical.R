@@ -42,22 +42,48 @@ integrate_historical <- function(df_combined_county,
   )
   
   # ---- 2) Build crop modeling df: join yield obs + totalWater ----
-  df_crop <- irr_aug %>%
+  df_crop_base <- irr_aug %>%
     filter(!is.na(Crop), Year %in% yrs_common) %>%
+    mutate(FIPS = as.character(FIPS))
+  
+  # remove duplicate column names created upstream
+  df_crop_base <- df_crop_base[, !duplicated(names(df_crop_base))]
+  
+  if ("precip_gs_m" %in% names(df_crop_base)) {
+    df_crop_base <- df_crop_base %>%
+      mutate(precip_gs_m_use = precip_gs_m)
+  } else if ("precip_gs_mm" %in% names(df_crop_base)) {
+    df_crop_base <- df_crop_base %>%
+      mutate(precip_gs_m_use = precip_gs_mm / 1000)
+  } else {
+    df_crop_base <- df_crop_base %>%
+      mutate(precip_gs_m_use = precip_m)
+  }
+  
+  df_crop_base <- df_crop_base %>%
     mutate(
-      # If WaterManagement exists, force rainfed/non-irrigated to 0; otherwise keep predicted irrigation.
-      irrigation_WaterUse_m = if ("WaterManagement" %in% names(.)) {
-        dplyr::if_else(WaterManagement %in% c("Rainfed","Non-Irrigated"), 0, dplyr::coalesce(irrigation_WaterUse_m, 0))
-      } else {
-        dplyr::coalesce(irrigation_WaterUse_m, 0)
-      },
-      totalWater_m = precip_m + irrigation_WaterUse_m
-    ) %>%
+      irrigation_WaterUse_m = if_else(
+        WaterManagement %in% c("Rainfed", "Non-Irrigated"),
+        0,
+        coalesce(irrigation_WaterUse_m, 0)
+      ),
+      totalWater_m = precip_gs_m_use + irrigation_WaterUse_m
+    )
+  
+  yield_join_by <- c("Year", "FIPS", "Crop", "WaterManagement")
+  
+  message("Rows before yield join: ", nrow(df_crop_base))
+  
+  df_crop <- df_crop_base %>%
     left_join(
-      df_yield_obs %>% mutate(FIPS = as.character(FIPS)),
-      by = c("Year","FIPS","Crop")
+      df_yield_obs %>%
+        mutate(FIPS = as.character(FIPS)) %>%
+        select(-any_of(c("is_irrig_hist"))),
+      by = yield_join_by
     ) %>%
     filter(is.finite(totalWater_m))
+  
+  message("Rows after yield join: ", nrow(df_crop))
   
   # optional area threshold (kept)
   if ("area_ha" %in% names(df_crop)) {
@@ -111,6 +137,16 @@ integrate_historical <- function(df_combined_county,
     left_join(wq_pred %>% select(Year, NitrateFluxPredicted_kg), by = "Year")
   
   # ---- 7) Basin totals per year ----
+  basin_cult_area <- common_input_basin %>%
+    select(Year, LandCover_m2_all_cult) %>%
+    distinct() %>%
+    rename(
+      Area_m2 = LandCover_m2_all_cult
+    ) %>%
+    mutate(
+      Area_ha = Area_m2 / 10000
+    )
+  
   basin_totals <- crop_basin_perha %>%
     mutate(
       Yield_total_kg      = Crop_area_ha * Yield_kgHa,
@@ -121,10 +157,9 @@ integrate_historical <- function(df_combined_county,
       Yield_total_kg      = sum(Yield_total_kg,      na.rm = TRUE),
       NetReturn_total_usd = sum(NetReturn_total_usd, na.rm = TRUE),
       Irrigation_total_m3 = sum(Irrigation_m3,       na.rm = TRUE),
-      Area_m2             = sum(Crop_area_m2,        na.rm = TRUE),
-      Area_ha             = sum(Crop_area_ha,        na.rm = TRUE),
       .groups = "drop"
     ) %>%
+    left_join(basin_cult_area, by = "Year") %>%
     left_join(wq_pred %>% select(Year, NitrateFluxPredicted_kg), by = "Year")
   
   # ---- 8) Irrigated fraction by year (kept) ----
@@ -148,3 +183,4 @@ integrate_historical <- function(df_combined_county,
     irr_frac_YR = irr_frac_YR
   )
 }
+

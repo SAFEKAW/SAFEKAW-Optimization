@@ -1,0 +1,598 @@
+---
+title: "Untitled"
+author: "BRW"
+date: "2026-04-29"
+output: html_document
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r}
+suppressPackageStartupMessages({
+  library(here)
+  library(readr)
+  library(dplyr)
+  library(tidyr)
+  library(ggplot2)
+})
+
+pal_crops <- c(
+  "Corn"     = "#EEC900",
+  "Soybeans" = "#548B54",
+  "Wheat"    = "#8B7355",
+  "Sorghum"  = "darkorange"
+)
+
+# ---- load new workflow historical integration outputs ----
+crop_basin_perha <- read_csv(
+  here("hpc_opt", "outputs", "integration", "int_crop_areanorm_annual.csv"),
+  show_col_types = FALSE
+)
+
+basin_totals <- read_csv(
+  here("hpc_opt", "outputs", "integration", "int_basin_annual.csv"),
+  show_col_types = FALSE
+)
+
+# ---- recreate p_overview_crop ----
+df_long_crop <- crop_basin_perha %>%
+  select(
+    Year, Crop,
+    Yield_kgHa,
+    NetReturn_ha,
+    Irrigation_m,
+    Crop_prc,
+    fert_kgcrop
+  ) %>%
+  pivot_longer(
+    cols = c(Yield_kgHa, NetReturn_ha, Irrigation_m, Crop_prc, fert_kgcrop),
+    names_to = "Variable",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    Variable = factor(
+      Variable,
+      levels = c("Yield_kgHa", "NetReturn_ha", "Irrigation_m", "Crop_prc", "fert_kgcrop"),
+      labels = c(
+        "Yield (kg/ha)",
+        "Net Return ($/ha)",
+        "Irrigation (m)",
+        "Crop %",
+        "Fertilizer (kg/yr)"
+      )
+    )
+  )
+
+p_overview_crop <- ggplot(df_long_crop, aes(x = Year, y = Value, color = Crop)) +
+  geom_line() +
+  geom_point() +
+  scale_color_manual(values = pal_crops) +
+  facet_wrap(~ Variable, scales = "free_y", ncol = 2) +
+  labs(
+    title = "Integrated model outputs over time: crop area-normalized",
+    x = "Year",
+    y = "Value"
+  ) +
+  theme_bw(base_size = 12)
+
+p_overview_crop
+```
+
+
+```{r}
+# ---- recreate p_overview_basin ----
+df_long_basin <- basin_totals %>%
+  select(
+    Year,
+    Yield_total_kg,
+    NitrateFluxPredicted_kg,
+    Irrigation_total_m3,
+    Area_m2,
+    NetReturn_total_usd
+  ) %>%
+  pivot_longer(
+    cols = c(
+      Yield_total_kg,
+      NitrateFluxPredicted_kg,
+      Irrigation_total_m3,
+      Area_m2,
+      NetReturn_total_usd
+    ),
+    names_to = "Variable",
+    values_to = "Value"
+  ) %>%
+  mutate(
+    Variable = factor(
+      Variable,
+      levels = c(
+        "Yield_total_kg",
+        "NitrateFluxPredicted_kg",
+        "Irrigation_total_m3",
+        "Area_m2",
+        "NetReturn_total_usd"
+      ),
+      labels = c(
+        "Pred Yield (kg)",
+        "Pred Nitrate Flux (kg)",
+        "Pred Irrigation (m³)",
+        "Hist. Cult. Area (m²)",
+        "Pred Net Return ($)"
+      )
+    )
+  )
+
+p_overview_basin <- ggplot(df_long_basin, aes(x = Year, y = Value, color = Variable)) +
+  geom_line() +
+  geom_point() +
+  facet_wrap(~ Variable, scales = "free_y", ncol = 2) +
+  labs(
+    title = "Integrated model outputs over time: basin totals",
+    x = "Year",
+    y = "Value"
+  ) +
+  theme_bw(base_size = 12) +
+  theme(legend.position = "none")
+
+p_overview_basin
+```
+
+
+
+```{r}
+library(purrr)
+library(stringr)
+
+# ---- load deterministic (future) results ----
+run_root <- here("hpc_opt", "outputs", "factorial_runs")
+
+res_files <- list.files(
+  run_root,
+  pattern = "^deterministic_results_.*\\.csv$",
+  recursive = TRUE,
+  full.names = TRUE
+)
+
+# clean + keep only ensemble runs (optional but recommended)
+res_files <- res_files[file.exists(res_files)]
+res_files <- res_files[str_detect(res_files, "ensemble")]
+
+results_plot <- map_dfr(res_files, function(f) {
+  read_csv(f, show_col_types = FALSE) %>%
+    mutate(
+      combo_name = str_remove(basename(f), "^deterministic_results_"),
+      combo_name = str_remove(combo_name, "\\.csv$")
+    )
+}) %>%
+  mutate(
+    profit_usdyr = -neg_profit_usdyr,
+    mgmt = paste(irrigation_name, fertilizer_name, sep = " | ")
+  )
+```
+
+
+
+```{r}
+hist_cult_area <- read_csv(
+  here("hpc_opt", "outputs", "common_inputs_basin_hist_baseline.csv"),
+  show_col_types = FALSE
+) %>%
+  rename_with(~ stringr::str_replace_all(.x, " ", "_")) %>%
+  transmute(
+    Year,
+    landuse_name = "historical",
+    climate_pathway = "historical",
+    Cult_m2 = LandCover_m2_all_cult
+  )
+
+future_cult_area <- results_plot %>%
+  filter(landuse_name %in% c("fixed", "bau")) %>%
+  distinct(Year, landuse_name, climate_pathway, Cult_m2)
+
+cult_area_all <- bind_rows(hist_cult_area, future_cult_area)
+
+ggplot(cult_area_all, aes(x = Year, y = Cult_m2 / 1e6, color = landuse_name)) +
+   # raw historical (faded)
+  geom_line(
+    data = cult_area_all %>% filter(landuse_name == "historical"),
+    alpha = 0.3, linewidth = 0.7
+  ) +
+
+  # smoothed historical
+  geom_smooth(
+    data = cult_area_all %>% filter(landuse_name == "historical"),
+    method = "loess",
+    span = 0.75,   # <-- adjust smoothness
+    se = FALSE,
+    linewidth = 1.2
+  ) +
+
+  # future lines (no smoothing)
+  geom_line(
+    data = cult_area_all %>% filter(landuse_name != "historical"),
+    linewidth = 1.1
+  ) +
+  
+  labs(
+    x = "Year",
+    y = expression("Cultivated area (km"^2*")"),
+    title = "Historical and projected cultivated area"
+  ) +
+geom_vline(xintercept = c(2025, 2050, 2075),
+             linetype = "dashed", color = "grey55") +
+    annotate("text", x = 2014, y = Inf, label = "Historical",
+           vjust = 1.5, size = 4) +
+  annotate("text", x = 2037, y = Inf, label = "Early century",
+           vjust = 1.5, size = 4) +
+  annotate("text", x = 2062, y = Inf, label = "Mid century",
+           vjust = 1.5, size = 4) +
+  annotate("text", x = 2087, y = Inf, label = "Late century",
+           vjust = 1.5, size = 4) +
+
+  scale_color_manual(
+    values = c(
+      historical = "black",
+      fixed = "#1B9E77",
+      bau = "#D95F02"
+    ),
+    labels = c(
+      historical = "Historical",
+      fixed = "Fixed",
+      bau = "BAU"
+    )
+  ) +
+  scale_x_continuous(
+    breaks = c(2000, 2025, 2050, 2075, 2100),
+    limits = c(min(cult_area_all$Year, na.rm = TRUE), 2100)
+  ) +
+  labs(
+    x = "Year",
+    y = expression("Cultivated area (km"^2*")"),
+    color = "Land-use scenario",
+    title = "Historical and projected cultivated area"
+  ) +
+ 
+  theme_test(base_size = 13) +
+   theme(
+    legend.position = "right",
+    panel.grid.minor = element_blank()
+  )
+
+
+
+
+cult_area_all %>%
+  group_by(landuse_name) %>%
+  summarise(
+    min_km2 = min(Cult_m2 / 1e6, na.rm = TRUE),
+    max_km2 = max(Cult_m2 / 1e6, na.rm = TRUE),
+    mean_km2 = mean(Cult_m2 / 1e6, na.rm = TRUE),
+    .groups = "drop"
+  )
+```
+
+
+```{r}
+int_check <- read_csv(here("hpc_opt", "outputs","integration", "int_basin_annual.csv"))
+
+lc_check <- read_csv(here("hpc_opt", "outputs","common_inputs_basin_hist_baseline.csv"))
+
+left_join(int_check, lc_check, by = "Year") %>%
+  mutate(diff = Area_m2 - LandCover_m2_all_cult) %>%
+  summarise(
+    mean_diff = mean(diff, na.rm = TRUE),
+    pct_diff = mean(diff / LandCover_m2_all_cult, na.rm = TRUE)
+  )
+```
+
+
+
+```{r}
+# ---- historical climate ----
+clim_hist <- readr::read_csv(
+  here("hpc_opt", "outputs", "common_inputs_basin_hist_baseline.csv"),
+  show_col_types = FALSE
+) %>%
+  transmute(
+    Year,
+    climate_pathway = "historical",
+    period = "historical",
+    precip_m = Climate_precip_m,
+    tmin_C = Climate_Tmin_C,
+    tmax_C = Climate_Tmax_C
+  )
+
+# ---- future climate ----
+clim_future <- bind_rows(
+  readr::read_csv(here("hpc_opt", "outputs", "common_inputs_basin_ensemble_rcp45_early.csv"), show_col_types = FALSE) %>%
+    mutate(climate_pathway = "rcp45", period = "early"),
+  readr::read_csv(here("hpc_opt", "outputs", "common_inputs_basin_ensemble_rcp45_mid.csv"), show_col_types = FALSE) %>%
+    mutate(climate_pathway = "rcp45", period = "mid"),
+  readr::read_csv(here("hpc_opt", "outputs", "common_inputs_basin_ensemble_rcp45_late.csv"), show_col_types = FALSE) %>%
+    mutate(climate_pathway = "rcp45", period = "late"),
+  readr::read_csv(here("hpc_opt", "outputs", "common_inputs_basin_ensemble_rcp85_early.csv"), show_col_types = FALSE) %>%
+    mutate(climate_pathway = "rcp85", period = "early"),
+  readr::read_csv(here("hpc_opt", "outputs", "common_inputs_basin_ensemble_rcp85_mid.csv"), show_col_types = FALSE) %>%
+    mutate(climate_pathway = "rcp85", period = "mid"),
+  readr::read_csv(here("hpc_opt", "outputs", "common_inputs_basin_ensemble_rcp85_late.csv"), show_col_types = FALSE) %>%
+    mutate(climate_pathway = "rcp85", period = "late")
+) %>%
+  transmute(
+    Year,
+    climate_pathway,
+    period,
+    precip_m = Climate_precip_m,
+    tmin_C = Climate_Tmin_C,
+    tmax_C = Climate_Tmax_C
+  )
+
+clim_hist_overlay <- clim_hist %>%
+  select(-climate_pathway) %>%
+  tidyr::crossing(
+    climate_pathway = c("rcp45", "rcp85")
+  )
+
+clim_plot <- bind_rows(clim_hist_overlay, clim_future) %>%
+  pivot_longer(
+    cols = c(precip_m, tmin_C, tmax_C),
+    names_to = "variable",
+    values_to = "value"
+  ) %>%
+  mutate(
+    source = if_else(period == "historical", "historical", climate_pathway),
+    variable = recode(
+      variable,
+      precip_m = "Precipitation (m)",
+      tmin_C = "Minimum temperature (°C)",
+      tmax_C = "Maximum temperature (°C)"
+    )
+  )
+
+
+
+p_climate_ppt <- clim_plot %>% filter(variable == "Precipitation (m)") %>%
+ggplot( aes(Year, value, color = source)) +
+  geom_line(linewidth = 0.8, alpha = 0.85) +
+  geom_vline(xintercept = c(2023, 2049, 2074), linetype = "dashed", color = "grey70") +
+ #facet_wrap(~variable, scales = "free_y") +
+  theme_test(base_size = 15) +
+  scale_color_manual(values = c("black", "skyblue", "maroon")) +
+      annotate("text", x = 2014, y = Inf, label = "Historical",
+           vjust = 1.5, size = 4) +
+  annotate("text", x = 2037, y = Inf, label = "Early century",
+           vjust = 1.5, size = 4) +
+  annotate("text", x = 2062, y = Inf, label = "Mid century",
+           vjust = 1.5, size = 4) +
+  annotate("text", x = 2087, y = Inf, label = "Late century",
+           vjust = 1.5, size = 4) +
+  labs(
+    title = "Historical and projected basin climate inputs",
+    subtitle = "Precipitation (m)", 
+    x = "Year",
+    y = NULL,
+    color = "Climate"
+  )
+
+p_climate_ppt
+
+
+p_climate_tmax <- clim_plot %>% filter(variable == "Maximum temperature (°C)") %>%
+ggplot( aes(Year, value, color = source)) +
+  geom_line(linewidth = 0.8, alpha = 0.85) +
+  geom_vline(xintercept = c(2023, 2049, 2074), linetype = "dashed", color = "grey70") +
+ #facet_wrap(~variable, scales = "free_y") +
+  theme_test(base_size = 15) +
+  scale_color_manual(values = c("black", "skyblue", "maroon")) +
+      annotate("text", x = 2014, y = Inf, label = "Historical",
+           vjust = 1.5, size = 4) +
+  annotate("text", x = 2037, y = Inf, label = "Early century",
+           vjust = 1.5, size = 4) +
+  annotate("text", x = 2062, y = Inf, label = "Mid century",
+           vjust = 1.5, size = 4) +
+  annotate("text", x = 2087, y = Inf, label = "Late century",
+           vjust = 1.5, size = 4) +
+  labs(
+    subtitle = "Maximum temperature (°C)",
+    x = "Year",
+    y = NULL,
+    color = "Climate"
+  )
+
+p_climate_tmax
+
+p_climate_ppt / p_climate_tmax
+
+
+clim_future %>%
+  summarise(
+    tmin_min = min(tmin_C, na.rm = TRUE),
+    tmin_max = max(tmin_C, na.rm = TRUE),
+    tmax_min = min(tmax_C, na.rm = TRUE),
+    tmax_max = max(tmax_C, na.rm = TRUE)
+  )
+
+
+
+
+
+
+# 1) Compare future climate used by irrigation model
+clim_check <- bind_rows(
+  read_csv(here("hpc_opt", "outputs", "common_inputs_county_ensemble_rcp45_early.csv"), show_col_types = FALSE) %>% mutate(climate_pathway = "rcp45", period = "early"),
+  read_csv(here("hpc_opt", "outputs", "common_inputs_county_ensemble_rcp45_mid.csv"), show_col_types = FALSE) %>% mutate(climate_pathway = "rcp45", period = "mid"),
+  read_csv(here("hpc_opt", "outputs", "common_inputs_county_ensemble_rcp45_late.csv"), show_col_types = FALSE) %>% mutate(climate_pathway = "rcp45", period = "late"),
+  read_csv(here("hpc_opt", "outputs", "common_inputs_county_ensemble_rcp85_early.csv"), show_col_types = FALSE) %>% mutate(climate_pathway = "rcp85", period = "early"),
+  read_csv(here("hpc_opt", "outputs", "common_inputs_county_ensemble_rcp85_mid.csv"), show_col_types = FALSE) %>% mutate(climate_pathway = "rcp85", period = "mid"),
+  read_csv(here("hpc_opt", "outputs", "common_inputs_county_ensemble_rcp85_late.csv"), show_col_types = FALSE) %>% mutate(climate_pathway = "rcp85", period = "late")
+) %>%
+  filter(Crop %in% c("Corn", "Soybeans")) %>%
+  group_by(climate_pathway, Year) %>%
+  summarise(
+    precip_m = mean(precip_m, na.rm = TRUE),
+    tmax_C_avg = mean(tmax_C_avg, na.rm = TRUE),
+    tmin_C_avg = mean(tmin_C_avg, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+clim_check %>%
+  group_by(climate_pathway) %>%
+  summarise(
+    precip_min = min(precip_m, na.rm = TRUE),
+    precip_mean = mean(precip_m, na.rm = TRUE),
+    precip_max = max(precip_m, na.rm = TRUE),
+    tmax_min = min(tmax_C_avg, na.rm = TRUE),
+    tmax_mean = mean(tmax_C_avg, na.rm = TRUE),
+    tmax_max = max(tmax_C_avg, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+
+results_plot %>%
+  group_by(climate_pathway, Year, landuse_name) %>%
+  summarise(
+    mean_irrig = mean(irrigation_m3yr, na.rm = TRUE),
+    min_irrig = min(irrigation_m3yr, na.rm = TRUE),
+    max_irrig = max(irrigation_m3yr, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  filter(climate_pathway == "rcp45", mean_irrig < 1e6)
+
+
+models <- load_models(here("hpc_opt", "models"))
+summary(models$irrigation_lm)
+
+```
+
+
+
+- irrigation floor
+```{r}
+wu_alluvial <- readr::read_csv(
+  here("data", "WaterUseByCrop_AlluvialCorridor.csv"),
+  show_col_types = FALSE
+)
+
+# convert to depth
+wu_depth <- wu_alluvial %>%
+  mutate(
+    irrArea_m2 = irrArea_ha * 1e4,
+    depth_m = waterUse_m3 / irrArea_m2
+  ) %>%
+  filter(is.finite(depth_m), depth_m > 0)
+
+wu_depth %>%
+  summarise(
+    min = min(depth_m),
+    p5 = quantile(depth_m, 0.05),
+    p10 = quantile(depth_m, 0.10),
+    p25 = quantile(depth_m, 0.25),
+    median = median(depth_m),
+    mean = mean(depth_m),
+    p75 = quantile(depth_m, 0.75),
+    max = max(depth_m)
+  )
+
+ggplot(wu_depth, aes(depth_m)) +
+  geom_histogram(bins = 30) +
+  theme_bw() +
+  labs(title = "Historical irrigation depth (m)")
+```
+
+
+
+
+
+
+```{r}
+library(dplyr)
+library(readr)
+library(ggplot2)
+library(here)
+library(tidyr)
+
+# ---- load one MACA model/scenario ----
+clim_daily <- read_csv(
+  here("data", "ClimateData_County_cnrm_cm5_rcp85_early.csv"),
+  show_col_types = FALSE
+)
+
+# ---- QC summary ----
+clim_daily %>%
+  summarise(
+    tmin_min = min(tmmn_C_gridmet, na.rm = TRUE),
+    tmin_mean = mean(tmmn_C_gridmet, na.rm = TRUE),
+    tmin_max = max(tmmn_C_gridmet, na.rm = TRUE),
+    tmax_min = min(tmmx_C_gridmet, na.rm = TRUE),
+    tmax_mean = mean(tmmx_C_gridmet, na.rm = TRUE),
+    tmax_max = max(tmmx_C_gridmet, na.rm = TRUE),
+    n_tmin_gt_tmax = sum(tmmn_C_gridmet > tmmx_C_gridmet, na.rm = TRUE),
+    precip_min = min(precip_mm_gridmet, na.rm = TRUE),
+    precip_mean = mean(precip_mm_gridmet, na.rm = TRUE),
+    precip_max = max(precip_mm_gridmet, na.rm = TRUE)
+  )
+
+
+
+clim_annual <- clim_daily %>%
+  group_by(Year) %>%
+  summarise(
+    precip_m = sum(mean(precip_mm_gridmet, na.rm = TRUE)) / 1000,
+    tmin_C = mean(tmmn_C_gridmet, na.rm = TRUE),
+    tmax_C = mean(tmmx_C_gridmet, na.rm = TRUE),
+    .groups = "drop"
+  ) %>%
+  pivot_longer(
+    cols = c(precip_m, tmin_C, tmax_C),
+    names_to = "variable",
+    values_to = "value"
+  )
+
+ggplot(clim_annual, aes(Year, value)) +
+  geom_line(linewidth = 1) +
+  facet_wrap(~ variable, scales = "free_y", ncol = 1) +
+  theme_bw(base_size = 13) +
+  labs(
+    title = "QC climate plot: CNRM-CM5 RCP45 early",
+    x = "Year",
+    y = NULL
+  )
+
+
+hist_daily <- read_csv(
+  here("data", "ClimateData_County_hist_baseline.csv"),
+  show_col_types = FALSE
+)
+
+hist_annual <- hist_daily %>%
+  group_by(Year) %>%
+  summarise(
+    source = "historical",
+    precip_m = sum(mean(precip_mm_gridmet, na.rm = TRUE)) / 1000,
+    tmin_C = mean(tmmn_C_gridmet, na.rm = TRUE),
+    tmax_C = mean(tmmx_C_gridmet, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+future_annual <- clim_daily %>%
+  group_by(Year) %>%
+  summarise(
+    source = "cnrm_cm5_rcp45_early",
+    precip_m = sum(mean(precip_mm_gridmet, na.rm = TRUE)) / 1000,
+    tmin_C = mean(tmmn_C_gridmet, na.rm = TRUE),
+    tmax_C = mean(tmmx_C_gridmet, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+bind_rows(hist_annual, future_annual) %>%
+  pivot_longer(c(precip_m, tmin_C, tmax_C), names_to = "variable", values_to = "value") %>%
+  ggplot(aes(Year, value, color = source)) +
+  geom_line(linewidth = 1) +
+  facet_wrap(~ variable, scales = "free_y", ncol = 1) +
+  theme_bw(base_size = 13) +
+  labs(
+    title = "Historical vs CNRM-CM5 RCP45 early climate",
+    x = "Year",
+    y = NULL,
+    color = NULL
+  )
+```
+

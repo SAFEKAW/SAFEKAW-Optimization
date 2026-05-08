@@ -1,0 +1,5 @@
+name: current
+irrig_frac_factor: 1.0
+irr_eff: 1.0
+irrig_area_cap_m2: .inf
+description: Current irrigated fraction and irrigation demand

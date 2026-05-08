@@ -1,0 +1,18 @@
+scenario_name: flatline_hist
+
+run:
+  years:
+    start: 2006
+    end: 2023
+  climate_source: observed_historical
+
+land_use:
+  cultivated_area:
+    mode: fixed
+
+  crop_shares:
+    mode: fixed
+
+management:
+  irrigation: fixed_baseline
+  fertilizer: fixed_baseline

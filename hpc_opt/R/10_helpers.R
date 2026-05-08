@@ -82,6 +82,63 @@ build_baseline_irrig_frac_from_county <- function(df_county, years_vec) {
   pmax(0, pmin(1, tot$irrig_area / tot$cult_area))
 }
 
+
+
+# --- Basin-wide baseline irrigated fraction from water-use area ----------
+build_baseline_irrig_frac_from_wateruse <- function(wu_by_crop, lu_baseline, years_vec,
+                                                    crops = c("Corn", "Soybeans")) {
+  
+  wu_sum <- wu_by_crop %>%
+    filter(Year %in% years_vec, Crop %in% crops) %>%
+    group_by(Year) %>%
+    summarise(
+      irrig_area_m2 = sum(irrArea_ha, na.rm = TRUE) * 1e4,
+      .groups = "drop"
+    )
+  
+  df <- wu_sum %>%
+    left_join(
+      lu_baseline %>% select(Year, LC_cult_base),
+      by = "Year"
+    ) %>%
+    mutate(
+      irrig_frac = irrig_area_m2 / LC_cult_base
+    )
+  
+  out <- mean(df$irrig_frac, na.rm = TRUE)
+  pmax(0, pmin(1, out))
+}
+
+
+# --- Crop-specific historical irrigation mix from water-use area ----------
+build_hist_mix_from_wateruse <- function(wu_by_crop, df_county, years_vec,
+                                         crops = c("Corn", "Soybeans", "Sorghum", "Wheat")) {
+  
+  irrig_by_crop <- wu_by_crop %>%
+    filter(Year %in% years_vec, Crop %in% crops) %>%
+    group_by(Crop) %>%
+    summarise(
+      irrig_area = sum(irrArea_ha, na.rm = TRUE) * 1e4,
+      .groups = "drop"
+    )
+  
+  total_by_crop <- df_county %>%
+    filter(Year %in% years_vec, Crop %in% crops) %>%
+    group_by(Crop) %>%
+    summarise(
+      total_area = sum(area_m2, na.rm = TRUE),
+      .groups = "drop"
+    )
+  
+  total_by_crop %>%
+    left_join(irrig_by_crop, by = "Crop") %>%
+    mutate(
+      irrig_area = coalesce(irrig_area, 0),
+      irrig_frac = if_else(total_area > 0, irrig_area / total_area, 0),
+      irrig_frac = pmax(0, pmin(1, irrig_frac))
+    )
+}
+
 # --- Mean crop mix over historical period (baseline x for eval) ----------
 get_baseline_obs_x <- function(int_crop_areanorm_path,
                                crops = c("Corn","Soybeans","Sorghum","Wheat")) {

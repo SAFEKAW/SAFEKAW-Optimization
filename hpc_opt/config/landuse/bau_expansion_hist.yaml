@@ -1,0 +1,26 @@
+scenario_name: bau_expansion_hist
+
+run:
+  years:
+    start: 2006
+    end: 2023
+  climate_source: observed_historical
+
+land_use:
+  cultivated_area:
+    mode: linear_expansion
+    annual_increment:
+      type: fraction_of_baseline
+      value: 0.01
+    cap:
+      type: cultivated_plus_grassland
+
+  new_area_allocation:
+    corn: 0.60
+    soybean: 0.30
+    wheat: 0.05
+    sorghum: 0.05
+
+management:
+  irrigation: fixed_baseline
+  fertilizer: fixed_baseline

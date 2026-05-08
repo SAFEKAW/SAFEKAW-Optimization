@@ -17,8 +17,25 @@ suppressPackageStartupMessages({
 yrs_common <- 2006:2023
 
 # Inputs (use your original data folder for now)
-df_combined_county <- read_csv(here("hpc_opt","outputs","common_inputs_county.csv"), show_col_types = FALSE)
-common_input_basin <- read_csv(here("hpc_opt","outputs","common_inputs_basin.csv"), show_col_types = FALSE)
+df_combined_county <- read_csv(
+  here("hpc_opt", "outputs", "common_inputs_county_hist_baseline.csv"),
+  show_col_types = FALSE
+) %>%
+  filter(Year %in% yrs_common) %>%
+  mutate(FIPS = as.character(FIPS)) %>%
+  select(-any_of(c("WaterManagement", "is_irrig_hist"))) %>%
+  mutate(
+    is_irrig_hist = FALSE,
+    WaterManagement = "Non-Irrigated"
+  )
+#IRRIG IS NOT RIGHT HERE....
+
+common_input_basin <- read_csv(
+  here("hpc_opt", "outputs", "common_inputs_basin_hist_baseline.csv"),
+  show_col_types = FALSE
+) %>%
+  filter(Year %in% yrs_common)
+
 df_yield_obs       <- read_csv(here("data","CropYieldData_County.csv"), show_col_types = FALSE)
 df_nitrate_obs     <- read_csv(here("data","RiverNitrateData_EKSRB.csv"), show_col_types = FALSE)
 
@@ -52,3 +69,46 @@ write_csv(res$basin_totals,     file.path(outdir, "int_basin_annual.csv"))
 write_csv(res$irr_frac_YR,      file.path(outdir, "irr_frac_annual.csv"))
 
 message("Wrote integration outputs to: ", outdir)
+
+
+
+#checking crop area
+crop_check <- read_csv(
+  here::here("hpc_opt", "outputs", "integration", "int_crop_areanorm_annual.csv"),
+  show_col_types = FALSE
+) %>%
+  group_by(Year) %>%
+  summarise(
+    crop_sum_m2 = sum(Crop_area_m2, na.rm = TRUE),
+    .groups = "drop"
+  )
+
+basin_check <- read_csv(
+  here::here("hpc_opt", "outputs", "integration", "int_basin_annual.csv"),
+  show_col_types = FALSE
+) %>%
+  select(Year, Area_m2)
+
+left_join(crop_check, basin_check, by = "Year") %>%
+  mutate(
+    diff = crop_sum_m2 - Area_m2,
+    pct_diff = diff / Area_m2
+  ) %>%
+  summarise(
+    mean_pct_diff = mean(pct_diff, na.rm = TRUE),
+    min_pct_diff = min(pct_diff, na.rm = TRUE),
+    max_pct_diff = max(pct_diff, na.rm = TRUE)
+  )
+
+
+common_hist <- read_csv(
+  here::here("hpc_opt", "outputs", "common_inputs_county_hist_baseline.csv"),
+  show_col_types = FALSE
+)
+common_hist %>%
+  filter(LandCoverGroup == "all_cult") %>%
+  group_by(LandCover) %>%
+  summarise(area_m2 = sum(area_m2, na.rm = TRUE), .groups = "drop") %>%
+  mutate(pct = area_m2 / sum(area_m2)) %>%
+  arrange(desc(pct))
+#validating mismatch in areas

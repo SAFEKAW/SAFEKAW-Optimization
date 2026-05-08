@@ -23,6 +23,13 @@ predict_wq_flux <- function(df, wq_lm) {
 # build the basin-year WQ input from basin table + (optional) county irrigation augmented
 build_wq_input_from_basin <- function(common_input_basin, irr_aug = NULL, use_modeled_irr = TRUE) {
   
+  if ("LandCover_m2_all cult" %in% names(common_input_basin) &&
+      !("LandCover_m2_all_cult" %in% names(common_input_basin))) {
+    common_input_basin <- common_input_basin %>%
+      rename(LandCover_m2_all_cult = `LandCover_m2_all cult`)
+  }
+  
+  
   wq_in <- common_input_basin %>%
     select(Year, starts_with("Climate_"), starts_with("LandCover_m2_"), any_of("Management_FertilizerUse_kg")) %>%
     mutate(

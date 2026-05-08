@@ -1,0 +1,4 @@
+name: efficient
+irrig_frac_factor: 1.0
+irr_eff: 1.176470588
+description: Irrigation efficiency scenario with 15 percent water savings

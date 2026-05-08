@@ -23,6 +23,7 @@ library(MuMIn)
 library(here)
 
 
+
 getwd()
 source(here("code","paths+packages.R"))          #loads path & packages (from original files)
 source(here("code/optimization", "01.5_model_wrappers.R"))   # loads model wrappers
@@ -34,6 +35,40 @@ df_combined <- read_csv(here("data", "common_inputs_county.csv"))
 common_input_basin <- read_csv(here( "data","common_inputs_basin.csv")) %>% mutate(Management_FertilizerUse_kgm2 = Management_FertilizerUse_kg / `LandCover_m2_all cult`)  |> subset(Year %in% yrs_common) 
 
 df_county_areas  <- read_csv(here("data","county_areas.csv"))
+
+
+
+
+pal_landcover <- c(
+  "Grass/Pasture/Hay" = "#C1FFC1", #"#9BCD9B",
+  "Cultivated"       = "#8B8B00", #"#8B5742",
+  "Developed"         = "darkgrey"
+)
+
+# crop types
+pal_crops <- c(
+  "Corn"    = "#EEC900",
+  "Soybeans" = "#548B54",
+  "Wheat"   = "#8B7355", ##CD6839,
+  "Sorghum" =  "darkorange"       #"#8B475D"
+)
+
+
+# ggplot2 helper scales so you don't have to retype scale_*_manual every time
+scale_fill_landcover <- function(...) {
+  ggplot2::scale_fill_manual(values = pal_landcover, ...)
+}
+scale_color_landcover <- function(...) {
+  ggplot2::scale_color_manual(values = pal_landcover, ...)
+}
+
+scale_fill_crops <- function(...) {
+  ggplot2::scale_fill_manual(values = pal_crops, ...)
+}
+scale_color_crops <- function(...) {
+  ggplot2::scale_color_manual(values = pal_crops, ...)
+}
+
 
 ```
 
@@ -356,14 +391,17 @@ df_combo_NR <- compute_net_returns(df_combo_aug, crop_params, universal_costs)
  - aggregating at the two scales and visualizing
 ```{r}
 # --- Basin per-year, per-crop (per-ha) summary from df_combo_NR ---
-crop_basin_perha <- df_combo_NR %>% mutate(Year = as.numeric(Year)) %>%
+crop_basin_perha <- df_combo_NR%>%
   group_by(Year, Crop) %>%
   summarise(
     Crop_area_m2 = sum(area_m2), 
     Crop_area_ha = sum(area_ha),
     
     Yield_kgHa   = weighted.mean(yield_kgHa_detrended_fit, w = area_m2, na.rm = TRUE),
+        Yield_kgHa_hist   = weighted.mean(yield_kgHa_detrended, w = area_m2, na.rm = TRUE),
+
     Irrigation_m = weighted.mean(irr_depth_m_pred,         w = area_m2, na.rm = TRUE),
+        Irrigation_m_hist = weighted.mean(irrigation_WaterUse_m,         w = area_m2, na.rm = TRUE),
 
     Irrigation_m3 = sum(Irrigation_m3_total,     na.rm = TRUE),
     fert_kgcrop = sum(fertilizer_kgCrop, na.rm = TRUE),
@@ -375,9 +413,70 @@ crop_basin_perha <- df_combo_NR %>% mutate(Year = as.numeric(Year)) %>%
     .groups = "drop"
   )  %>%
   left_join(
-    df_wq_aug %>% dplyr::select(Year, NitrateFluxPredicted_kg = NitrateFluxPredicted_kg),
+    df_wq_aug %>% dplyr::select(Year, NitrateFluxPredicted_kg = NitrateFluxPredicted_kg, NitrateFlux_kg),
     by = "Year"
   )
+
+
+
+df_long_crop <- crop_basin_perha %>%
+  select(Year, Crop, Yield_kgHa, Yield_kgHa_hist, NetReturn_ha, Irrigation_m, Irrigation_m_hist, Crop_prc, fert_kgcrop) %>% #NitrateFluxPredicted_kg
+  pivot_longer(
+    cols = c(Yield_kgHa, Yield_kgHa_hist, NetReturn_ha, , Irrigation_m,Irrigation_m_hist, Crop_prc, fert_kgcrop), #NitrateFluxPredicted_kg
+    names_to = "Variable", values_to = "Value"
+  ) %>%
+  mutate(Variable = factor(
+    Variable,
+    levels = c("Yield_kgHa", "Yield_kgHa_hist", "NetReturn_ha",  "Irrigation_m", "Irrigation_m_hist", "Crop_prc", "fert_kgcrop"), #"NitrateFluxPredicted_kg",
+    labels = c("Yield (kg/ha)", "Hist. Yield (kg/ha)", "Net Return ($/ha)",  "Irrigation (m)", "Hist. Irr (m)", "Crop %", "Fertilizer (kg/yr)") #"Nitrate Flux (kg/yr)",
+  ))
+
+
+df_long_crop_p1 <- crop_basin_perha %>%
+  select(Year, Crop, Yield_kgHa, Yield_kgHa_hist) %>% #NitrateFluxPredicted_kg
+  pivot_longer(
+    cols = c(Yield_kgHa, Yield_kgHa_hist), #NitrateFluxPredicted_kg
+    names_to = "Variable", values_to = "Value"
+  ) %>%
+  mutate(Variable = factor(
+    Variable,
+    levels = c("Yield_kgHa", "Yield_kgHa_hist"), #"NitrateFluxPredicted_kg",
+    labels = c("Yield (kg/ha)", "Hist. Yield (kg/ha)") #"Nitrate Flux (kg/yr)",
+  ))
+
+df_long_crop_p2 <- crop_basin_perha %>%
+  select(Year, Crop,  Irrigation_m, Irrigation_m_hist) %>% #NitrateFluxPredicted_kg
+  pivot_longer(
+    cols = c( Irrigation_m,Irrigation_m_hist), #NitrateFluxPredicted_kg
+    names_to = "Variable", values_to = "Value"
+  ) %>%
+  mutate(Variable = factor(
+    Variable,
+    levels = c( "Irrigation_m", "Irrigation_m_hist"), #"NitrateFluxPredicted_kg",
+    labels = c("Irrigation (m)", "Hist. Irr (m)") #"Nitrate Flux (kg/yr)",
+  ))
+
+
+
+p_overview_crop_p1 <- ggplot(df_long_crop_p1, aes(x = Year, y = Value, color = Crop)) +
+  geom_line() + geom_point() +
+  scale_color_crops() + 
+  facet_wrap(~ Variable,  ncol = 2) +#scales = "free_y",
+  labs(title = "Integrated Model Outputs Over Time (area norm x crop)", x = "Year", y = "Value") +
+  theme_test(base_size = 12)
+
+
+p_overview_crop_p2 <- ggplot(df_long_crop_p2, aes(x = Year, y = Value, color = Crop)) +
+  geom_line() + geom_point() +
+    scale_color_crops() + 
+  facet_wrap(~ Variable,  ncol = 2) +#scales = "free_y",
+  labs(title = "Integrated Model Outputs Over Time (area norm x crop)", x = "Year", y = "Value") +
+  theme_test(base_size = 12)
+
+
+p_overview_crop_p1 / p_overview_crop_p2
+ggsave(file.path("figures", "Int_Basin_Crop_hist.png"),
+       width = 180, height = 140, units = "mm")
 
 
 
@@ -395,7 +494,8 @@ df_long_crop <- crop_basin_perha %>%
 
 p_overview_crop <- ggplot(df_long_crop, aes(x = Year, y = Value, color = Crop)) +
   geom_line() + geom_point() +
-  facet_wrap(~ Variable, scales = "free_y", ncol = 2) +
+    scale_color_crops() + 
+  facet_wrap(~ Variable, scales = "free_y", ncol = 2) +#
   labs(title = "Integrated Model Outputs Over Time (area norm x crop)", x = "Year", y = "Value") +
   theme_test(base_size = 12)
 
@@ -403,7 +503,6 @@ p_overview_crop <- ggplot(df_long_crop, aes(x = Year, y = Value, color = Crop)) 
 p_overview_crop
 ggsave(file.path("figures", "Int_Basin_Crop.png"),
        width = 180, height = 120, units = "mm")
-
 
 # Save table for downstream work
 write_csv(crop_basin_perha, file.path("data", "int_crop_areanorm_annual.csv"))
@@ -413,7 +512,7 @@ write_csv(crop_basin_perha, file.path("data", "int_crop_areanorm_annual.csv"))
 
 ```{r}
 # --- Basin totals per year (join areas first) ---
-area_by_crop <- df_combined %>%
+area_by_crop <- df_combined %>% 
   filter(!is.na(Crop)) %>%
   mutate(area_ha = coalesce(area_ha, area_m2/10000)) %>%
   group_by(Year, Crop) %>%
@@ -421,40 +520,56 @@ area_by_crop <- df_combined %>%
             area_m2_total = sum(area_m2, na.rm = TRUE)
             , .groups = "drop")
 
-basin_totals <- crop_basin_perha %>%
+basin_totals <- crop_basin_perha %>% 
   left_join(area_by_crop, by = c("Year","Crop")) %>%
   mutate(
-    Yield_total_kg      = area_ha_total * Yield_kgHa,
+  #  Yield_total_hist      = area_ha_total * Yield_kgHa_hist,
+        Yield_total_kg      = area_ha_total * Yield_kgHa,
+
     NetReturn_total_usd = area_ha_total * NetReturn_ha
   ) %>%
   group_by(Year) %>%
   summarise(
     Yield_total_kg      = sum(Yield_total_kg,      na.rm = TRUE),
+     #   Yield_total_hist      = sum(Yield_total_hist,      na.rm = TRUE),
+
     NetReturn_total_usd = sum(NetReturn_total_usd, na.rm = TRUE),
     Irrigation_total_m3 = sum(Irrigation_m3, na.rm = TRUE),
+#      Irrigation_m3_hist = sum(Irrigation_m_hist) * area_m2_total,
+    
     Area_m2 = sum(area_m2_total,  na.rm = TRUE), 
     Area_ha = sum(area_ha_total,  na.rm = TRUE), 
     .groups = "drop"
   ) %>%
   left_join(
-    df_wq_aug %>% dplyr::select(Year, NitrateFluxPredicted_kg = NitrateFluxPredicted_kg),
+    df_wq_aug %>% dplyr::select(Year, NitrateFluxPredicted_kg = NitrateFluxPredicted_kg), #NitrateFlux_kg
     by = "Year"
   )
+
 
 write_csv(basin_totals, file.path("data", "int_basin_annual.csv"))
 
 
 #viz
 df_long_basin <- basin_totals %>%
-  select(Year, Yield_total_kg, NetReturn_total_usd, NitrateFluxPredicted_kg, Irrigation_total_m3, Area_m2) %>%
+  select(Year, Yield_total_kg, NitrateFluxPredicted_kg, Irrigation_total_m3,  Area_m2, NetReturn_total_usd) %>%
   pivot_longer(
-    cols = c(Yield_total_kg, NetReturn_total_usd, NitrateFluxPredicted_kg, Irrigation_total_m3, Area_m2),
+    cols = c(Yield_total_kg,  NitrateFluxPredicted_kg, Irrigation_total_m3, Area_m2, 
+             NetReturn_total_usd),
+    
+  #   select(Year, Yield_total_kg, Yield_total_hist, NitrateFluxPredicted_kg, NitrateFlux_kg, Irrigation_total_m3, Irrigation_m3_hist,  Area_m2, NetReturn_total_usd) %>%
+#  pivot_longer(
+#    cols = c(Yield_total_kg, Yield_total_hist,  NitrateFluxPredicted_kg, NitrateFlux_kg, Irrigation_total_m3, Irrigation_m3_hist, Area_m2, 
+ #            NetReturn_total_usd),
     names_to = "Variable", values_to = "Value"
   ) %>%
   mutate(Variable = factor(
     Variable,
-    levels = c("Yield_total_kg", "NetReturn_total_usd", "NitrateFluxPredicted_kg", "Irrigation_total_m3", "Area_m2"),
-    labels = c("Yield (kg)", "Net Return ($)", "Nitrate Flux (kg)", "Irrigation (m³)", "Cult. Area (m2)")
+        levels = c("Yield_total_kg", "NitrateFluxPredicted_kg",  "Irrigation_total_m3","Area_m2", "NetReturn_total_usd"),
+    labels = c("Pred Yield (kg)", "Pred Nitrate Flux (kg)", "Pred Irrigation (m³)", "Hist. Cult. Area (m2)",  "Pred Net Return ($)")
+    
+  #  levels = c("Yield_total_kg",  "Yield_total_hist", "NitrateFluxPredicted_kg", "NitrateFlux_kg",  "Irrigation_total_m3","Irrigation_m3_hist","Area_m2", "NetReturn_total_usd"),
+  #  labels = c("Pred Yield (kg)", "Hist. Yield (kg)", "Pred Nitrate Flux (kg)", "Hist. Nitrate Flux (kg)", "Pred Irrigation (m³)", "Hist. Irrigation (m³)",  "Hist. Cult. Area (m2)",  "Pred Net Return ($)")
   ))
 
 p_overview_basin <- ggplot(df_long_basin, aes(x = Year, y = Value, color = Variable)) +
@@ -488,4 +603,6 @@ df_combo_NR %>%
 
 irr_frac_YR %>% filter(WaterManagement == "Irrigated") %>% summarise(mean = mean(frac_of_basin_cultivated))
 ```
+
+
 

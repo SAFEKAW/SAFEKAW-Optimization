@@ -1,0 +1,4 @@
+name: current
+fert_factor: 1.0
+fert_gamma: 0.1
+description: Current fertilizer application rates
