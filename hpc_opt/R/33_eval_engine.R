@@ -45,6 +45,13 @@ eval_candidate_year <- function(
     }
     
     shares <- c(Corn = corn, Soybeans = soy, Sorghum = sor, Wheat = wheat)
+    
+    if (isTRUE(policy$debug_crop_alloc)) {
+      message(
+        "Year ", Y, " | optimizer shares: ",
+        paste(names(shares), round(shares, 3), collapse = " | ")
+      )
+    }
   }
   
   # ---- baseline land cover for year ----
@@ -123,6 +130,19 @@ eval_candidate_year <- function(
       area_m2 = target_crop_area_m2 * within_crop_wt,
       area_ha = area_m2 / 1e4
     )
+  
+  if (isTRUE(policy$debug_crop_alloc)) {
+    df_crop_y %>%
+      group_by(Crop) %>%
+      summarise(
+        allocated_area_m2 = sum(area_m2, na.rm = TRUE),
+        .groups = "drop"
+      ) %>%
+      mutate(
+        allocated_share = allocated_area_m2 / sum(allocated_area_m2, na.rm = TRUE)
+      ) %>%
+      print(n = Inf)
+  }
   
   # ---- allocate irrigated vs rainfed area by crop (same logic as before) ----
   alloc <- allocate_irrigation(

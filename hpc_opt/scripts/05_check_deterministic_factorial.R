@@ -275,32 +275,6 @@ hist_irrig_common <- readr::read_csv(
 ) %>%
   select(Year, irrigation_m3yr_hist = Irrigation_total_m3)
 
-hist_obj_plot <- hist_obj %>%
-  left_join(hist_irrig_common, by = "Year") %>%
-  transmute(
-    Year,
-    irrigation = irrigation_m3yr_hist,
-    nitrate = NitrateFluxPredicted_kg,
-    profit = NetReturn_total_usd
-  ) %>%
-  pivot_longer(
-    cols = c(irrigation, nitrate, profit),
-    names_to = "metric",
-    values_to = "value"
-  ) %>%
-  tidyr::crossing(
-    climate_pathway = unique(summary_long$climate_pathway)
-  )
-
-hist_obj_plot %>%
-  group_by(metric) %>%
-  summarise(
-    min = min(value, na.rm = TRUE),
-    mean = mean(value, na.rm = TRUE),
-    max = max(value, na.rm = TRUE)
-  )
-
-
 
 
 summary_df <- results_plot %>%
@@ -336,6 +310,32 @@ summary_long %>%
     mean_value = mean(.data$mean, na.rm = TRUE),
     max_value = max(.data$mean, na.rm = TRUE),
     .groups = "drop"
+  )
+
+
+hist_obj_plot <- hist_obj %>%
+  left_join(hist_irrig_common, by = "Year") %>%
+  transmute(
+    Year,
+    irrigation = irrigation_m3yr_hist,
+    nitrate = NitrateFluxPredicted_kg,
+    profit = NetReturn_total_usd
+  ) %>%
+  pivot_longer(
+    cols = c(irrigation, nitrate, profit),
+    names_to = "metric",
+    values_to = "value"
+  ) %>%
+  tidyr::crossing(
+    climate_pathway = unique(summary_long$climate_pathway)
+  )
+
+hist_obj_plot %>%
+  group_by(metric) %>%
+  summarise(
+    min = min(value, na.rm = TRUE),
+    mean = mean(value, na.rm = TRUE),
+    max = max(value, na.rm = TRUE)
   )
 
 
@@ -389,6 +389,152 @@ p_traj_lumped <-
   theme(
     legend.position = "bottom"
   )
+
+
+
+
+
+
+landuse_labels <- c(
+  fixed = "Fixed cultivated area",
+  bau = "BAU expansion"
+)
+
+climate_labels <- c(
+  rcp45 = "RCP 4.5",
+  rcp85 = "RCP 8.5"
+)
+
+
+summary_long_plot <- summary_long %>%
+  mutate(
+    across(
+      c(mean, min, max),
+      ~ .x / 1e6
+    ),
+    metric = dplyr::recode(
+      as.character(metric),
+      "irrigation" = "Irrigation water use\n(million m³ yr⁻¹)",
+      "nitrate"    = "Nitrate export\n(million kg N yr⁻¹)",
+      "profit"     = "Net returns\n(million USD yr⁻¹)"
+    )
+  )
+
+
+summary_long_plot <- summary_long_plot %>%
+  mutate(
+    metric = dplyr::recode(
+      as.character(metric),
+      "irrigation" = "Irrigation water use\n(million m³ yr⁻¹)",
+      "nitrate"    = "Nitrate export\n(million kg N yr⁻¹)",
+      "profit"     = "Net returns\n(million USD yr⁻¹)"
+    ),
+    metric = factor(
+      metric,
+      levels = c(
+        "Nitrate export\n(million kg N yr⁻¹)",
+        "Irrigation water use\n(million m³ yr⁻¹)",
+        "Net returns\n(million USD yr⁻¹)"
+      )
+    )
+  )
+
+p_traj_lumped <-
+  ggplot(
+    summary_long_plot,
+    aes(
+      x = Year,
+      y = mean,
+      color = climate_pathway,
+      fill = climate_pathway
+    )
+  ) +
+  geom_ribbon(
+    aes(ymin = min, ymax = max),
+    alpha = 0.18,
+    color = NA
+  ) +
+  geom_line(linewidth = 1.3) +
+  
+  geom_vline(
+    xintercept = c(2025, 2050, 2075),
+    linetype = "dashed",
+    color = "grey55",
+    linewidth = 0.5
+  ) +
+  
+  annotate("text", x = 2037.5, y = Inf, label = "Early century",
+           vjust = 1.4, size = 3.5, color = "grey25") +
+  annotate("text", x = 2062.5, y = Inf, label = "Mid century",
+           vjust = 1.4, size = 3.5, color = "grey25") +
+  annotate("text", x = 2087.5, y = Inf, label = "Late century",
+           vjust = 1.4, size = 3.5, color = "grey25") +
+  
+  facet_grid(
+    metric ~ landuse_name,
+    scales = "free_y",
+    labeller = labeller(
+      landuse_name = landuse_labels
+    )
+  ) +
+  
+  scale_color_manual(
+    name = "Climate pathway",
+    values = c(
+      rcp45 = "skyblue",
+      rcp85 = "maroon"
+    ),
+    labels = climate_labels
+  ) +
+  scale_fill_manual(
+    name = "Climate pathway",
+    values = c(
+      rcp45 = "skyblue",
+      rcp85 = "maroon"
+    ),
+    labels = climate_labels
+  ) +
+  
+  scale_x_continuous(
+    breaks = c(2025, 2050, 2075, 2100),
+    limits = c(2025, 2100),
+    expand = expansion(mult = c(0.01, 0.02))
+  ) +
+  
+  labs(
+    x = NULL,
+    y = NULL#,
+  #  title = "Projected trajectories across climate and land-use scenarios",
+  #  subtitle = "Lines show mean outcomes; shaded ribbons show management scenario bounds"
+  ) +
+  
+  guides(
+    fill = "none",
+    color = guide_legend(
+      override.aes = list(linewidth = 1.8, alpha = 1)
+    )
+  ) +
+  
+  theme_test(base_size = 15) +
+  theme(
+    plot.title = element_text(face = "bold", size = 18),
+    plot.subtitle = element_text(size = 13),
+    strip.background = element_rect(fill = "grey92", color = NA),
+    strip.text = element_text(face = "bold", size = 12),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    axis.title = element_text(face = "bold"),
+    axis.text = element_text(color = "black"),
+    panel.spacing = unit(1.1, "lines"),
+    axis.text.x = element_text(
+      angle = 45,      # Rotation angle in degrees
+      hjust = 1,       # Horizontal justification
+      vjust = 1        # Vertical justification
+    )
+  )
+
+
+p_traj_lumped
 
 ggsave(
   here("hpc_opt","outputs","factorial_runs","figures","traj_lumped.png"),

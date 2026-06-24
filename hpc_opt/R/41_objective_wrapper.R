@@ -60,7 +60,7 @@ make_objective_wrapper <- function(
       ),
       error = function(e) {
         message("Objective wrapper error: ", conditionMessage(e))
-        c(nitrate = PEN, profit = PEN, irrigation = PEN)
+        c(nitrate = PEN, profit_minimized = PEN, irrigation = PEN)
       }
     )
     
@@ -68,7 +68,7 @@ make_objective_wrapper <- function(
     
     
     if (length(out) != 3 || any(!is.finite(out))) {
-      return(c(nitrate = PEN, irrigation = PEN, profit = PEN))
+      return(c(nitrate = PEN, profit_minimized = PEN, irrigation = PEN))
     }
     
     out

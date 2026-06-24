@@ -27,9 +27,11 @@ get_arg <- function(flag, default = NULL) {
 
 gcm_name <- get_arg("--gcm", "ensemble")
 climate_pathway <- get_arg("--climate", "rcp45")
-period <- get_arg("--period", "early")
+period <- get_arg("--period", "late")
 landuse_name <- get_arg("--landuse", "fixed")
 seed <- as.integer(get_arg("--seed", "1"))
+popsize <- as.integer(get_arg("--popsize", "8"))
+generations <- as.integer(get_arg("--generations", "3"))
 
 scenario_name <- paste(landuse_name, gcm_name, climate_pathway, period, sep = "_")
 
@@ -89,34 +91,41 @@ df_county <- read_csv(df_county_file, show_col_types = FALSE) %>%
 # ---- load precompute ----
 precomp <- readRDS(precomp_file)
 
-years_vec <- precomp$years_vec
+# ---- load land-use trajectory ----
+scenario_path <- read_csv(scenario_path_file, show_col_types = FALSE) %>%
+  mutate(Year = as.integer(Year))
+
+# ---- overlapping years ----
+years_vec <- Reduce(
+  intersect,
+  list(
+    as.integer(precomp$years_vec),
+    unique(as.integer(df_county$Year)),
+    unique(as.integer(scenario_path$Year))
+  )
+)
+
+if (length(years_vec) == 0) {
+  stop("No overlapping years among precomp, df_county, and scenario_path.")
+}
+
 wq_base_by_year <- precomp$wq_base_by_year
 fert_ref_by_year <- precomp$fert_ref_by_year
 baseline_irrig_frac <- precomp$baseline_irrig_frac
 hist_mix <- precomp$hist_mix
 
-# ---- load land-use trajectory from deterministic current/current path ----
-scenario_path <- read_csv(scenario_path_file, show_col_types = FALSE) %>%
-  mutate(Year = as.integer(Year))
+# ---- land-use baseline for optimization context ----
+LC_dev_base_ref <- mean(precomp$lu_baseline$LC_dev_base, na.rm = TRUE)
 
-lu_baseline <- precomp$lu_baseline
-
-if (all(c("Year", "Cult_m2", "grass_mean_m2") %in% names(scenario_path))) {
-  lu_baseline <- precomp$lu_baseline %>%
-    select(Year, LC_dev_base) %>%
-    left_join(
-      scenario_path %>%
-        transmute(
-          Year,
-          LC_cult_base = Cult_m2,
-          LC_grass_base = grass_mean_m2
-        ),
-      by = "Year"
-    ) %>%
-    mutate(
-      LC_total = LC_cult_base + LC_grass_base + LC_dev_base
-    )
-}
+lu_baseline <- scenario_path %>%
+  filter(Year %in% years_vec) %>%
+  transmute(
+    Year,
+    LC_cult_base = Cult_m2,
+    LC_grass_base = grass_mean_m2,
+    LC_dev_base = LC_dev_base_ref,
+    LC_total = LC_cult_base + LC_grass_base + LC_dev_base
+  )
 
 # ---- fixed/current management policy for Step 1 ----
 policy <- list(
@@ -124,7 +133,8 @@ policy <- list(
   irrig_frac_factor = 1,
   irr_eff = 1,
   fert_factor = 1,
-  fert_gamma = 0.1
+  fert_gamma = 0.1,
+  debug_crop_alloc = FALSE
 )
 
 
@@ -162,8 +172,8 @@ res <- mco::nsga2(
   odim = 3,
   lower.bounds = lower,
   upper.bounds = upper,
-  popsize = 40,
-  generations = 30
+  popsize = popsize,
+  generations = generations
 )
 
 params <- as.data.frame(t(apply(res$par, 1, decode_crop_shares))) %>%

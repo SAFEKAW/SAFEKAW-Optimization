@@ -1,141 +1,91 @@
 # SAFEKAW Optimization Pipeline
 
-This document describes the full modeling and scenario workflow for the SAFEKAW optimization project.
+This document describes the optimization workflow for the SAFEKAW project.
 
 ## Overview
 
-The pipeline proceeds in five stages:
-0. Get climate data (historical + future) and put into workflow compatible inputs 
-1. Fit and save component statistical models
-2. Run historical integration
-3. Build scenario-specific precompute objects
-4. Run deterministic/factorial scenario analyses
-5. Summarize and quality-check outputs
+The optimization workflow builds on the deterministic integration framework but replaces fixed crop allocations with a multi-objective optimization routine.
 
-The full workflow can be run with:
+The workflow proceeds in six stages:
 
-```bash
-Rscript hpc_opt/scripts/run_full_pipeline.R
+	1. Generate climate and common input datasets 
+	2. Fit and save component models 
+	3. Build scenario-specific precompute objects 
+		- see SAFEKAW Deterministic Pipeline for details on how to run steps 1-3 if needed
+	4. Run unconstrained crop-allocation optimization
+		- The unconstrained optimization results serve as the theoretical benchmark against which all 			constrained and management-aware optimization scenarios are compared.
+	5. Summarize and compare Pareto frontiers
+	6. Add constraints and management decision variables/ Run constrained crop-management optimization
+	n. Summarize and compare Pareto frontiers between unconstrained & constrained
 
-or in R console by 
-source(here::here("hpc_opt", "scripts", "run_full_pipeline.R"))
+The optimization workflow currently evaluates tradeoffs among:
+	- Basin nitrate export (minimize)
+	- Agricultural profit (maximize)
+	- Irrigation water use (minimize)
+using the NSGA-II multi-objective evolutionary algorithm (in R; mco::nsga2()).
+
+Current decision variables:
+	- Corn fraction
+	- Soybean fraction
+	- Sorghum fraction
+	- Wheat fraction is calculated as: Wheat = 1 - Corn - Soybeans - Sorghum
+
+Current optimization runs represent a theoretical unconstrained frontier in which crop shares can vary freely.
+Management variables (fertilizer, irrigation, efficiency) are currently fixed at baseline conditions and will be added in future optimization phases.
 
 
+## The HPC optimization workflow can be tested with:
+
+Opt. 1. Command line:
+- Open: Windows Key → cmd
+- Navigate to your project: cd C:\Users\yourname\Documents\project_folder
+- Then: Rscript hpc_opt\scripts\04_run_optimization.R --gcm ensemble --climate rcp45 --period early --landuse
+
+Opt. 2. R console by 
+system('Rscript hpc_opt/scripts/04_run_optimization.R --climate rcp45 --period early --landuse fixed --seed 1')
 
 
 ## Detailed description of scripts 
-0. Get climate data (precip, temp, and gdd) from two places
-	- 00_make_climate_inputs_gridmet.R for historical period
-	- 00_make_climate_inputs_maca for future periods, for each climate model (5) and each scenario (2; RCP 4.5 and 8.5)
-		- The individual GCM MACA files are intermediate products!
-	- Then use 00_make_climate_ensemble to create single climate files that average climate models 
-	- Run these all in 01_common_inputs_make.R using this line in console:
-future_scenarios <- c(
-  "rcp45_early", "rcp45_mid", "rcp45_late",
-  "rcp85_early", "rcp85_mid", "rcp85_late"
-)
+See SAFEKAW Deterministic Pipeline for details on how to run steps 1-3 if needed: 
+	00_make_climate_inputs_gridmet.R for historical period
+   	00_make_climate_inputs_maca.R for future scenarios
 
-for (sc in future_scenarios) {
+	01_fit_and_save_models.R
 
-  message("\n==============================")
-  message("Running common inputs for: ", sc)
-  message("==============================\n")
+	03_precompute_inputs.R
 
-  scenario_tag <- sc
-  gcm_name <- "ensemble"
+4. Unconstrained Optimization 
+- Scripts:
+	- 04_run_optimization.R 
+	- 04_run_optimization_batch.R
 
-  source(here::here("hpc_opt", "scripts", "01_common_inputs_make.R"))
-}
+- UPDATE TO INCLUDE HPC FILES ONCE VALIDATED!!
+	- 06_run_optimization_grid.R
+	- 06_run_optimization_arrary_worker.R
 
-#THIS IS NOT REPEATED EACH TIME AND ONLY DONE AT ONSET - below is scripts run each time the whole workflow is ran:
-
-1. 01_fit_and_save_models.R
-
-- Fits and saves the component models used throughout the workflow:
-	- irrigation model
-	- crop yield models
-	- water-quality model
-
+- Management Assumptions
+	- Current optimization uses fixed management assumptions:
+		- cult_area_factor = 1
+		- irrig_frac_factor = 1
+		- irr_eff = 1
+		- fert_factor = 1
+	- Thus, optimization currently evaluates crop-allocation tradeoffs only.
 - Outputs:
-	- hpc_opt/models/irr_lm.rds
-	- hpc_opt/models/yield_kg_<Crop>.rds
-	- hpc_opt/models/yield_kcal_<Crop>.rds
-  	- hpc_opt/models/wq_lm.rds
+	- Location: hpc_opt/outputs/runs/<scenario_name>/
+	- Files: nsga2_res_<scenario>_seed<seed>.rds & pareto_front_<scenario>_seed<seed>.csv
 
-- Also writes model diagnostics and validation figures to:
-	- hpc_opt/outputs/model_checks/
-
-
-2. 02_integrate_historical_run.R
-
-- Uses the saved models to generate historical integrated outputs.
-- Inputs:
-	- historical common inputs
-	- observed yield data
-	- observed nitrate data
- 	- saved model .rds files
-
+5. Summarize and compare Pareto frontiers
+- Scripts:
+	- (main): 05_viz_runs_crop_LU_comp.R
+	- List others
 - Outputs:
-	- hpc_opt/outputs/integration/int_crop_areanorm_annual.csv
- 	- hpc_opt/outputs/integration/int_basin_annual.csv
- 	- hpc_opt/outputs/integration/irr_frac_annual.csv
+	- hpc_opt/outputs/optimization_summaries/
 
-
-
-3. 03_precompute_inputs.R
-
-- Builds scenario-specific precompute bundles for optimization and deterministic runs. Run all from console using this: 
-# historical first
-scenario_tag <- "hist_baseline"
-rm(gcm_name)
-
-source(here::here("hpc_opt", "scripts", "03_precompute_inputs.R"))
-
-# future ensemble
-future_scenarios <- c(
-  "rcp45_early", "rcp45_mid", "rcp45_late",
-  "rcp85_early", "rcp85_mid", "rcp85_late"
-)
-
-for (sc in future_scenarios) {
-  scenario_tag <- sc
-  gcm_name <- "ensemble"
-
-  source(here::here("hpc_opt", "scripts", "03_precompute_inputs.R"))
-}
-
-- Inputs:
-	- common_inputs_basin_*
-	- common_inputs_county_*
-	- historical baseline integration outputs
-
+6. Constrained optimization:
+- Scripts:
 - Outputs:
-	- hpc_opt/outputs/precompute/precomp_<scenario>.rds
-	- hpc_opt/outputs/precompute/precomp_<gcm>_<scenario>.rds
-	- hpc_opt/outputs/precompute/baseline_reference.rds
 
 
-4. 04_run_factorial_all.R
-
-- Loops across climate scenarios and GCMs and runs deterministic factorial scenarios. Actual engine for this script is 04_run_deterministic_factorial.R
-
-- Inputs:
-	- saved model .rds files
- 	- precompute bundles
-	- scenario configuration files
-
-- Outputs:
-	- hpc_opt/outputs/factorial_runs/...
-
-- run with:
-source(here::here("hpc_opt", "scripts", "04_run_factorial_all.R"))
 
 
-5. 05_check_deterministic_factorial.R
 
-- Reads deterministic/factorial outputs and generates summary tables and plots.
-
-- Outputs:
-	- scenario summaries
-	- normalized comparisons
-	- diagnostic plots
