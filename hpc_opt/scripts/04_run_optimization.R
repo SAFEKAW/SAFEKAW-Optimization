@@ -1,3 +1,4 @@
+#UNCONSTRAINED
 suppressPackageStartupMessages({
   library(here)
   library(readr)
@@ -48,7 +49,9 @@ stopifnot(!is.null(models$wq_lm))
 # ---- economics ----
 universal_costs <- list(
   irr_cost_per_m3 = 0.029,
-  fert_share_direct = 0.2
+  fert_share_direct = 0.2,
+  nutrient_mgmt_full_cost_per_acre = 34.30,
+  nutrient_mgmt_max_reduction = 0.30
 )
 
 crop_params <- tibble::tribble(
@@ -113,6 +116,7 @@ wq_base_by_year <- precomp$wq_base_by_year
 fert_ref_by_year <- precomp$fert_ref_by_year
 baseline_irrig_frac <- precomp$baseline_irrig_frac
 hist_mix <- precomp$hist_mix
+irrigation_reference <- precomp$irrigation_reference
 
 # ---- land-use baseline for optimization context ----
 LC_dev_base_ref <- mean(precomp$lu_baseline$LC_dev_base, na.rm = TRUE)
@@ -152,6 +156,7 @@ fn <- make_objective_wrapper(
   crop_params = crop_params,
   baseline_irrig_frac = baseline_irrig_frac,
   hist_mix = hist_mix,
+  irrigation_reference = irrigation_reference,
   fert_ref_by_year = fert_ref_by_year,
   policy = policy
 )
@@ -178,8 +183,41 @@ res <- mco::nsga2(
 
 params <- as.data.frame(t(apply(res$par, 1, decode_crop_shares))) %>%
   mutate(
+    solution_id = row_number(),
     scenario_name = scenario_name,
     seed = seed
+  )
+
+mean_cultivated_area_m2 <- mean(lu_baseline$LC_cult_base, na.rm = TRUE)
+irrigation_area_out <- bind_rows(lapply(seq_len(nrow(params)), function(i) {
+  shares_i <- unlist(params[i, c("Corn", "Soybeans", "Sorghum", "Wheat")])
+  summarize_candidate_irrigation_area(
+    crop_shares = shares_i,
+    cultivated_area_m2 = mean_cultivated_area_m2,
+    irrigated_fraction = baseline_irrig_frac,
+    hist_mix = hist_mix,
+    irrigation_reference = irrigation_reference
+  ) %>%
+    mutate(solution_id = i, .before = 1)
+}))
+
+params <- params %>%
+  left_join(
+    irrigation_area_out %>%
+      group_by(solution_id) %>%
+      summarise(
+        basin_irrigated_area_m2 = sum(basin_irrigated_area_m2, na.rm = TRUE),
+        basin_irrigated_fraction_of_model_cultivated =
+          sum(basin_irrigated_fraction_of_model_cultivated, na.rm = TRUE),
+        estimated_alluvial_irrigated_area_m2 =
+          sum(estimated_alluvial_irrigated_area_m2, na.rm = TRUE),
+        estimated_alluvial_irrigated_fraction_of_cdl_cultivated =
+          sum(estimated_alluvial_irrigated_fraction_of_cdl_cultivated, na.rm = TRUE),
+        estimated_alluvial_irrigated_fraction_of_expansion_eligible =
+          sum(estimated_alluvial_irrigated_fraction_of_expansion_eligible, na.rm = TRUE),
+        .groups = "drop"
+      ),
+    by = "solution_id"
   )
 
 objectives <- as.data.frame(res$value) %>%
@@ -231,6 +269,11 @@ if (any(is.na(pareto_out[required_cols]))) {
 write_csv(
   pareto_out,
   file.path(outdir, sprintf("pareto_front_%s_seed%d.csv", scenario_name, seed))
+)
+
+write_csv(
+  irrigation_area_out,
+  file.path(outdir, sprintf("irrigation_area_by_domain_crop_%s_seed%d.csv", scenario_name, seed))
 )
 
 message("DONE. Scenario=", scenario_name, " seed=", seed, " -> ", outdir)

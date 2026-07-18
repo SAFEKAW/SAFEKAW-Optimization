@@ -681,3 +681,558 @@ p_tern_density <- ggplot() +
 p_tern_density
 
 
+# ------------------------------------------
+# 8) Constrained-management smoke-test checks
+# ------------------------------------------
+# These plots use only outputs containing the finalized management-cost and
+# irrigation-constraint metadata. Older smoke-test files are excluded.
+
+fert_check <- solutions %>%
+  filter(
+    phase == "crop_fert",
+    is.finite(fertilizer_reduction_fraction),
+    is.finite(nutrient_management_cost_usdyr)
+  ) %>%
+  mutate(
+    fertilizer_reduction_pct = 100 * fertilizer_reduction_fraction,
+    nutrient_management_cost_musd = nutrient_management_cost_usdyr / 1e6,
+    profit_musd = Profit_usd / 1e6
+  )
+
+if (nrow(fert_check) > 0) {
+  p_fert_cost_check <- ggplot(
+    fert_check,
+    aes(
+      fertilizer_reduction_pct,
+      nutrient_management_cost_musd,
+      color = profit_musd
+    )
+  ) +
+    geom_line(
+      aes(group = interaction(Scenario_raw, seed)),
+      color = "grey65",
+      linewidth = 0.6
+    ) +
+    geom_point(size = 3) +
+    scale_color_viridis_c(labels = scales::label_dollar(suffix = "M")) +
+    scale_x_continuous(limits = c(0, 30), breaks = seq(0, 30, 5)) +
+    labs(
+      title = "Recurring nutrient-management cost is proportional to fertilizer reduction",
+      x = "Fertilizer reduction (%)",
+      y = "Annual nutrient-management cost (million $)",
+      color = "Profit"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(panel.grid.minor = element_blank(), legend.position = "bottom")
+
+  ggsave(
+    file.path(fig_dir, "constraint_check_fertilizer_cost.png"),
+    p_fert_cost_check, width = 8.5, height = 5.5, dpi = 300
+  )
+}
+
+if (!"irrig_frac_factor_min" %in% names(solutions)) {
+  solutions$irrig_frac_factor_min <- 0.85
+}
+if (!"irrig_frac_factor_max" %in% names(solutions)) {
+  solutions$irrig_frac_factor_max <- 1.15
+}
+
+irrig_check <- solutions %>%
+  filter(
+    phase == "crop_fert_irreff_irrigfrac",
+    is.finite(irrig_frac_factor),
+    is.finite(irrigation_water_savings_fraction),
+    is.finite(alluvial_target_irrig_area_cap_fraction),
+    is.finite(irrig_frac_factor_min),
+    is.finite(irrig_frac_factor_max)
+  ) %>%
+  mutate(
+    irrigation_withdrawal_million_m3 = Irr_m3 / 1e6,
+    irrigation_efficiency_savings_pct =
+      100 * irrigation_water_savings_fraction,
+    alluvial_cap_use_pct =
+      100 * alluvial_target_irrig_area_cap_fraction
+  )
+
+if (nrow(irrig_check) > 0) {
+  bound_min <- unique(irrig_check$irrig_frac_factor_min)[1]
+  bound_max <- unique(irrig_check$irrig_frac_factor_max)[1]
+
+  p_irrig_extent_check <- ggplot(
+    irrig_check,
+    aes(
+      irrig_frac_factor,
+      irrigation_withdrawal_million_m3,
+      color = irrigation_efficiency_savings_pct
+    )
+  ) +
+    annotate(
+      "rect", xmin = bound_min, xmax = bound_max,
+      ymin = -Inf, ymax = Inf, fill = "grey85", alpha = 0.45
+    ) +
+    geom_vline(
+      xintercept = c(bound_min, bound_max),
+      linetype = "dashed", color = "grey35"
+    ) +
+    geom_point(size = 3.4) +
+    scale_color_viridis_c(labels = function(x) paste0(round(x, 1), "%")) +
+    scale_x_continuous(labels = scales::label_percent(accuracy = 1)) +
+    labs(
+      title = "Irrigation-extent decisions remain inside the adoption bounds",
+      subtitle = "Shaded region is the allowed 0.85-1.15 baseline multiplier",
+      x = "Irrigated extent relative to baseline",
+      y = "Annual irrigation withdrawal (million m3)",
+      color = "Efficiency\nsavings"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(panel.grid.minor = element_blank(), legend.position = "bottom")
+
+  p_alluvial_cap_check <- ggplot(
+    irrig_check,
+    aes(irrig_frac_factor, alluvial_cap_use_pct, color = Profit_usd / 1e6)
+  ) +
+    geom_hline(yintercept = 100, linetype = "dashed", color = "firebrick") +
+    geom_point(size = 3.4) +
+    scale_color_viridis_c(labels = scales::label_dollar(suffix = "M")) +
+    scale_x_continuous(labels = scales::label_percent(accuracy = 1)) +
+    scale_y_continuous(
+      limits = c(0, 105),
+      labels = function(x) paste0(round(x), "%")
+    ) +
+    labs(
+      title = "Estimated alluvial target-crop irrigation stays below the land ceiling",
+      subtitle = "Dashed line is the physical cap after reserving non-target irrigation",
+      x = "Irrigated extent relative to baseline",
+      y = "Alluvial target-crop cap used",
+      color = "Profit"
+    ) +
+    theme_minimal(base_size = 12) +
+    theme(panel.grid.minor = element_blank(), legend.position = "bottom")
+
+  ggsave(
+    file.path(fig_dir, "constraint_check_irrigation_extent.png"),
+    p_irrig_extent_check, width = 8.5, height = 5.5, dpi = 300
+  )
+  ggsave(
+    file.path(fig_dir, "constraint_check_alluvial_cap.png"),
+    p_alluvial_cap_check, width = 8.5, height = 5.5, dpi = 300
+  )
+}
+
+
+# ------------------------------------------
+# 9) Final-phase 12-scenario smoke-test comparison
+# ------------------------------------------
+# Seed 101 is the local 12-context plumbing test (popsize 8, generations 3).
+# These figures compare behavior and constraint mechanics; they are not
+# convergence or production-frontier diagnostics.
+
+smoke12 <- solutions %>%
+  filter(
+    phase == "crop_fert_irreff_irrigfrac",
+    seed == 101
+  )
+
+if (nrow(smoke12) > 0) {
+  smoke12 <- smoke12 %>%
+    mutate(
+      fertilizer_reduction_pct = 100 * fertilizer_reduction_fraction,
+      irrigation_efficiency_savings_pct =
+        100 * irrigation_water_savings_fraction,
+      irrigated_extent_pct = 100 * irrig_frac_factor,
+      alluvial_cap_use_pct =
+        100 * alluvial_target_irrig_area_cap_fraction
+    )
+
+  smoke_summary <- smoke12 %>%
+    group_by(
+      Scenario_raw, landuse_name, climate_pathway, period,
+      crop_reference_period
+    ) %>%
+    summarise(
+      n_solutions = n(),
+      nitrate_min_kg = min(Nitrate_kgyr),
+      nitrate_max_kg = max(Nitrate_kgyr),
+      profit_min_usd = min(Profit_usd),
+      profit_max_usd = max(Profit_usd),
+      irrigation_min_m3 = min(Irr_m3),
+      irrigation_max_m3 = max(Irr_m3),
+      fertilizer_reduction_min_pct = min(fertilizer_reduction_pct),
+      fertilizer_reduction_max_pct = max(fertilizer_reduction_pct),
+      efficiency_savings_min_pct = min(irrigation_efficiency_savings_pct),
+      efficiency_savings_max_pct = max(irrigation_efficiency_savings_pct),
+      irrigated_extent_min_pct = min(irrigated_extent_pct),
+      irrigated_extent_max_pct = max(irrigated_extent_pct),
+      alluvial_cap_use_max_pct = max(alluvial_cap_use_pct),
+      .groups = "drop"
+    )
+
+  write_csv(
+    smoke_summary,
+    file.path(fig_dir, "smoke12_scenario_summary_seed101.csv")
+  )
+
+  smoke_objectives <- smoke12 %>%
+    transmute(
+      landuse_name, climate_pathway, period,
+      `Nitrate export (million kg)` = Nitrate_kgyr / 1e6,
+      `Profit (million $)` = Profit_usd / 1e6,
+      `Irrigation withdrawal (million m3)` = Irr_m3 / 1e6
+    ) %>%
+    pivot_longer(
+      cols = starts_with(c("Nitrate", "Profit", "Irrigation")),
+      names_to = "Objective",
+      values_to = "Value"
+    )
+
+  p_smoke_objectives <- ggplot(
+    smoke_objectives,
+    aes(period, Value, fill = climate_pathway)
+  ) +
+    geom_boxplot(
+      position = position_dodge(width = 0.75),
+      width = 0.62,
+      outlier.shape = NA,
+      alpha = 0.72
+    ) +
+    geom_point(
+      aes(color = climate_pathway),
+      position = position_jitterdodge(
+        jitter.width = 0.08, dodge.width = 0.75
+      ),
+      size = 1.6,
+      alpha = 0.75
+    ) +
+    facet_grid(Objective ~ landuse_name, scales = "free_y") +
+    scale_fill_manual(values = c("RCP 4.5" = "steelblue", "RCP 8.5" = "maroon")) +
+    scale_color_manual(values = c("RCP 4.5" = "steelblue", "RCP 8.5" = "maroon")) +
+    labs(
+      title = "Objective ranges across the 12 final-phase smoke-test contexts",
+      subtitle = "Eight candidates per context; distributions are diagnostic, not converged frontiers",
+      x = NULL,
+      y = NULL,
+      fill = "Climate",
+      color = "Climate"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      panel.grid.minor = element_blank(),
+      legend.position = "bottom",
+      strip.text = element_text(face = "bold")
+    )
+
+  ggsave(
+    file.path(fig_dir, "smoke12_objective_ranges_seed101.png"),
+    p_smoke_objectives, width = 11.5, height = 8.5, dpi = 300
+  )
+
+  smoke_management <- smoke12 %>%
+    transmute(
+      Scenario_raw, landuse_name, climate_pathway, period,
+      `Fertilizer reduction (%)` = fertilizer_reduction_pct,
+      `Efficiency water savings (%)` = irrigation_efficiency_savings_pct,
+      `Irrigated extent (% of baseline)` = irrigated_extent_pct
+    ) %>%
+    pivot_longer(
+      cols = ends_with("(%)") | ends_with("baseline)"),
+      names_to = "Decision",
+      values_to = "Value"
+    ) %>%
+    group_by(
+      Scenario_raw, landuse_name, climate_pathway, period, Decision
+    ) %>%
+    summarise(
+      Minimum = min(Value),
+      Median = median(Value),
+      Maximum = max(Value),
+      .groups = "drop"
+    )
+
+  p_smoke_management <- ggplot(
+    smoke_management,
+    aes(period, Median, color = climate_pathway)
+  ) +
+    geom_linerange(
+      aes(ymin = Minimum, ymax = Maximum),
+      position = position_dodge(width = 0.45),
+      linewidth = 0.85
+    ) +
+    geom_point(
+      position = position_dodge(width = 0.45),
+      size = 2.6
+    ) +
+    facet_grid(Decision ~ landuse_name, scales = "free_y") +
+    scale_color_manual(values = c("RCP 4.5" = "steelblue", "RCP 8.5" = "maroon")) +
+    labs(
+      title = "Management decisions vary across climate, period, and land-use context",
+      subtitle = "Points are medians; vertical ranges span the eight smoke-test candidates",
+      x = NULL,
+      y = NULL,
+      color = "Climate"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      panel.grid.minor = element_blank(),
+      legend.position = "bottom",
+      strip.text = element_text(face = "bold")
+    )
+
+  ggsave(
+    file.path(fig_dir, "smoke12_management_ranges_seed101.png"),
+    p_smoke_management, width = 11.5, height = 8.5, dpi = 300
+  )
+
+  smoke_crops <- smoke12 %>%
+    select(
+      Scenario_raw, landuse_name, climate_pathway, period,
+      Corn, Soybeans, Sorghum, Wheat
+    ) %>%
+    pivot_longer(
+      cols = c(Corn, Soybeans, Sorghum, Wheat),
+      names_to = "Crop",
+      values_to = "Share"
+    ) %>%
+    group_by(
+      Scenario_raw, landuse_name, climate_pathway, period, Crop
+    ) %>%
+    summarise(
+      Minimum = 100 * min(Share),
+      Median = 100 * median(Share),
+      Maximum = 100 * max(Share),
+      .groups = "drop"
+    ) %>%
+    mutate(Crop = factor(Crop, levels = c("Corn", "Soybeans", "Wheat", "Sorghum")))
+
+  p_smoke_crops <- ggplot(
+    smoke_crops,
+    aes(period, Median, color = climate_pathway)
+  ) +
+    geom_linerange(
+      aes(ymin = Minimum, ymax = Maximum),
+      position = position_dodge(width = 0.45),
+      linewidth = 0.85
+    ) +
+    geom_point(
+      position = position_dodge(width = 0.45),
+      size = 2.5
+    ) +
+    facet_grid(landuse_name ~ Crop, scales = "free_y") +
+    scale_color_manual(values = c("RCP 4.5" = "steelblue", "RCP 8.5" = "maroon")) +
+    labs(
+      title = "Dynamic crop bounds produce context-specific crop-share ranges",
+      subtitle = "Points are medians; vertical ranges span the eight smoke-test candidates",
+      x = NULL,
+      y = "Crop share (%)",
+      color = "Climate"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      panel.grid.minor = element_blank(),
+      legend.position = "bottom",
+      strip.text = element_text(face = "bold")
+    )
+
+  ggsave(
+    file.path(fig_dir, "smoke12_crop_share_ranges_seed101.png"),
+    p_smoke_crops, width = 12, height = 6.5, dpi = 300
+  )
+
+  smoke_cap <- smoke12 %>%
+    group_by(Scenario_raw, landuse_name, climate_pathway, period) %>%
+    summarise(
+      Minimum = min(alluvial_cap_use_pct),
+      Median = median(alluvial_cap_use_pct),
+      Maximum = max(alluvial_cap_use_pct),
+      .groups = "drop"
+    )
+
+  p_smoke_cap <- ggplot(
+    smoke_cap,
+    aes(period, Median, color = climate_pathway)
+  ) +
+    geom_hline(yintercept = 100, linetype = "dashed", color = "firebrick") +
+    geom_linerange(
+      aes(ymin = Minimum, ymax = Maximum),
+      position = position_dodge(width = 0.45),
+      linewidth = 0.9
+    ) +
+    geom_point(
+      position = position_dodge(width = 0.45),
+      size = 2.8
+    ) +
+    facet_wrap(~landuse_name, nrow = 1) +
+    scale_color_manual(values = c("RCP 4.5" = "steelblue", "RCP 8.5" = "maroon")) +
+    scale_y_continuous(
+      limits = c(0, 105),
+      labels = function(x) paste0(round(x), "%")
+    ) +
+    labs(
+      title = "Alluvial irrigation-area cap remains nonbinding in all 12 smoke tests",
+      subtitle = "Points are medians; vertical ranges span candidates; dashed line is the physical ceiling",
+      x = NULL,
+      y = "Alluvial target-crop cap used",
+      color = "Climate"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      panel.grid.minor = element_blank(),
+      legend.position = "bottom",
+      strip.text = element_text(face = "bold")
+    )
+
+  ggsave(
+    file.path(fig_dir, "smoke12_alluvial_cap_ranges_seed101.png"),
+    p_smoke_cap, width = 10, height = 5.5, dpi = 300
+  )
+}
+
+
+# ------------------------------------------
+# 10) Unconstrained 12-scenario smoke-test comparison
+# ------------------------------------------
+# These are the eight-candidate seed-1 runs stored directly under each
+# scenario directory. Management/alluvial plots do not apply because all
+# management levers remain fixed at baseline in the unconstrained workflow.
+
+unconstrained12 <- solutions %>%
+  filter(
+    is.na(phase),
+    seed == 1,
+    Scenario_raw != "baseline"
+  )
+
+if (nrow(unconstrained12) > 0) {
+  unconstrained_summary <- unconstrained12 %>%
+    group_by(Scenario_raw, landuse_name, climate_pathway, period) %>%
+    summarise(
+      n_solutions = n(),
+      nitrate_min_kg = min(Nitrate_kgyr),
+      nitrate_max_kg = max(Nitrate_kgyr),
+      profit_min_usd = min(Profit_usd),
+      profit_max_usd = max(Profit_usd),
+      irrigation_min_m3 = min(Irr_m3),
+      irrigation_max_m3 = max(Irr_m3),
+      .groups = "drop"
+    )
+
+  write_csv(
+    unconstrained_summary,
+    file.path(fig_dir, "unconstrained_smoke12_scenario_summary_seed1.csv")
+  )
+
+  unconstrained_objectives <- unconstrained12 %>%
+    transmute(
+      landuse_name, climate_pathway, period,
+      `Nitrate export (million kg)` = Nitrate_kgyr / 1e6,
+      `Profit (million $)` = Profit_usd / 1e6,
+      `Irrigation withdrawal (million m3)` = Irr_m3 / 1e6
+    ) %>%
+    pivot_longer(
+      cols = starts_with(c("Nitrate", "Profit", "Irrigation")),
+      names_to = "Objective",
+      values_to = "Value"
+    )
+
+  p_unconstrained_objectives <- ggplot(
+    unconstrained_objectives,
+    aes(period, Value, fill = climate_pathway)
+  ) +
+    geom_boxplot(
+      position = position_dodge(width = 0.75),
+      width = 0.62,
+      outlier.shape = NA,
+      alpha = 0.72
+    ) +
+    geom_point(
+      aes(color = climate_pathway),
+      position = position_jitterdodge(
+        jitter.width = 0.08, dodge.width = 0.75
+      ),
+      size = 1.6,
+      alpha = 0.75
+    ) +
+    facet_grid(Objective ~ landuse_name, scales = "free_y") +
+    scale_fill_manual(values = c("RCP 4.5" = "steelblue", "RCP 8.5" = "maroon")) +
+    scale_color_manual(values = c("RCP 4.5" = "steelblue", "RCP 8.5" = "maroon")) +
+    labs(
+      title = "Objective ranges across the 12 unconstrained smoke-test contexts",
+      subtitle = "Eight candidates per context; distributions are diagnostic, not converged frontiers",
+      x = NULL,
+      y = NULL,
+      fill = "Climate",
+      color = "Climate"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      panel.grid.minor = element_blank(),
+      legend.position = "bottom",
+      strip.text = element_text(face = "bold")
+    )
+
+  ggsave(
+    file.path(fig_dir, "unconstrained_smoke12_objective_ranges_seed1.png"),
+    p_unconstrained_objectives, width = 11.5, height = 8.5, dpi = 300
+  )
+
+  unconstrained_crops <- unconstrained12 %>%
+    select(
+      Scenario_raw, landuse_name, climate_pathway, period,
+      Corn, Soybeans, Sorghum, Wheat
+    ) %>%
+    pivot_longer(
+      cols = c(Corn, Soybeans, Sorghum, Wheat),
+      names_to = "Crop",
+      values_to = "Share"
+    ) %>%
+    group_by(
+      Scenario_raw, landuse_name, climate_pathway, period, Crop
+    ) %>%
+    summarise(
+      Minimum = 100 * min(Share),
+      Median = 100 * median(Share),
+      Maximum = 100 * max(Share),
+      .groups = "drop"
+    ) %>%
+    mutate(Crop = factor(Crop, levels = c("Corn", "Soybeans", "Wheat", "Sorghum")))
+
+  p_unconstrained_crops <- ggplot(
+    unconstrained_crops,
+    aes(period, Median, color = climate_pathway)
+  ) +
+    geom_linerange(
+      aes(ymin = Minimum, ymax = Maximum),
+      position = position_dodge(width = 0.45),
+      linewidth = 0.85
+    ) +
+    geom_point(
+      position = position_dodge(width = 0.45),
+      size = 2.5
+    ) +
+    facet_grid(landuse_name ~ Crop) +
+    scale_color_manual(values = c("RCP 4.5" = "steelblue", "RCP 8.5" = "maroon")) +
+    scale_y_continuous(
+      limits = c(0, 100),
+      labels = function(x) paste0(round(x), "%")
+    ) +
+    labs(
+      title = "Unconstrained crop allocations span much broader composition ranges",
+      subtitle = "Points are medians; vertical ranges span the eight smoke-test candidates",
+      x = NULL,
+      y = "Crop share",
+      color = "Climate"
+    ) +
+    theme_minimal(base_size = 11) +
+    theme(
+      panel.grid.minor = element_blank(),
+      legend.position = "bottom",
+      strip.text = element_text(face = "bold")
+    )
+
+  ggsave(
+    file.path(fig_dir, "unconstrained_smoke12_crop_share_ranges_seed1.png"),
+    p_unconstrained_crops, width = 12, height = 6.5, dpi = 300
+  )
+}
+
+

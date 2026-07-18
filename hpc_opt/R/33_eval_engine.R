@@ -15,10 +15,11 @@ eval_candidate_year <- function(
     lu_baseline,
     universal_costs,
     crop_params,
-    baseline_irrig_frac,
+    baseline_irrig_frac, #the overall fraction of cultivated area that is irrigated.
     fert_ref_by_year,
     policy = NULL,
-    hist_mix = NULL,
+    hist_mix = NULL, #crop-specific irrigation fractions used when irrigation is allocated differently among corn, soybeans, sorghum, and wheat.
+    irrigation_reference = NULL,
     shares_override = NULL
 ) {
   PEN <- 1e12
@@ -82,6 +83,23 @@ eval_candidate_year <- function(
   # ---- fertilizer policy ----
   fert_factor <- policy$fert_factor %||% 1
   fert_share_direct <- universal_costs$fert_share_direct %||% 0.2
+  nutrient_mgmt_full_cost_per_acre <-
+    universal_costs$nutrient_mgmt_full_cost_per_acre %||% 0
+  nutrient_mgmt_max_reduction <-
+    universal_costs$nutrient_mgmt_max_reduction %||% 0.30
+
+  if (!is.finite(nutrient_mgmt_full_cost_per_acre) ||
+      nutrient_mgmt_full_cost_per_acre < 0) {
+    stop("nutrient_mgmt_full_cost_per_acre must be non-negative.")
+  }
+  if (!is.finite(nutrient_mgmt_max_reduction) ||
+      nutrient_mgmt_max_reduction <= 0 || nutrient_mgmt_max_reduction > 1) {
+    stop("nutrient_mgmt_max_reduction must be in (0, 1].")
+  }
+  nutrient_mgmt_intensity <- pmin(
+    1,
+    pmax(0, 1 - fert_factor) / nutrient_mgmt_max_reduction
+  )
   
   # ---- subset county/crop rows for this year ----
   crops4 <- c("Corn", "Soybeans", "Sorghum", "Wheat")
@@ -213,6 +231,38 @@ eval_candidate_year <- function(
     return(c(PEN, PEN, PEN))
   }
 
+  # ---- estimated alluvial target-crop irrigated-area cap ----
+  # Candidate crop irrigation is mapped to the corridor using each crop's
+  # historical alluvial share of whole-basin irrigated area. This is a
+  # conservative physical safeguard, not a groundwater-level constraint.
+  alluvial_target_irrig_area_cap_m2 <-
+    policy$alluvial_target_irrig_area_cap_m2 %||% Inf
+
+  if (!is.null(irrigation_reference) &&
+      is.finite(alluvial_target_irrig_area_cap_m2)) {
+    capture_by_crop <- irrigation_reference$crop_summary %>%
+      select(Domain, Crop, irrigated_area_m2) %>%
+      tidyr::pivot_wider(names_from = Domain, values_from = irrigated_area_m2) %>%
+      mutate(alluvial_capture = pmin(1, alluvial / basin)) %>%
+      select(Crop, alluvial_capture)
+
+    estimated_alluvial_irrig_area_m2 <- df_irrig %>%
+      group_by(Crop) %>%
+      summarise(irrigated_area_m2 = sum(area_m2, na.rm = TRUE), .groups = "drop") %>%
+      left_join(capture_by_crop, by = "Crop") %>%
+      mutate(
+        alluvial_capture = coalesce(alluvial_capture, 0),
+        estimated_area_m2 = irrigated_area_m2 * alluvial_capture
+      ) %>%
+      summarise(total_m2 = sum(estimated_area_m2, na.rm = TRUE)) %>%
+      pull(total_m2)
+
+    if (estimated_alluvial_irrig_area_m2 >
+        alluvial_target_irrig_area_cap_m2) {
+      return(c(PEN, PEN, PEN))
+    }
+  }
+
   
   df_rain <- df_crop_y %>%
     mutate(
@@ -312,7 +362,11 @@ eval_candidate_year <- function(
       
       revenue_total   = income_per_kg * coalesce(yield_kgHa_detrended_fit, 0) * area_ha,
       base_cost_total = total_cost_per_kg_eff * coalesce(yield_kgHa_detrended_fit, 0) * area_ha,
-      irr_cost_total  = Irrigation_m3_total_eff * (universal_costs$irr_cost_per_m3 %||% 0)
+      irr_cost_total  = Irrigation_m3_total_eff * (universal_costs$irr_cost_per_m3 %||% 0),
+      nutrient_mgmt_cost_total =
+        (area_m2 / 4046.8564224) *
+        nutrient_mgmt_full_cost_per_acre *
+        nutrient_mgmt_intensity
     )
   
   Fert_kg_total <- sum(df_rows$fertilizer_kgCrop, na.rm = TRUE)
@@ -327,8 +381,10 @@ eval_candidate_year <- function(
   Revenue_total  <- sum(df_rows$revenue_total, na.rm = TRUE)
   BaseCost_total <- sum(df_rows$base_cost_total, na.rm = TRUE)
   Irr_totalCost  <- sum(df_rows$irr_cost_total, na.rm = TRUE)
+  NutrientMgmt_totalCost <- sum(df_rows$nutrient_mgmt_cost_total, na.rm = TRUE)
   
-  NR_total <- Revenue_total - (BaseCost_total + Irr_totalCost)
+  NR_total <- Revenue_total -
+    (BaseCost_total + Irr_totalCost + NutrientMgmt_totalCost)
   
   # ---- water quality stays at basin/year scale ----
   BasinArea_m2 <- Cult_m2 + Grass_m2 + LC_dev_base
@@ -363,7 +419,55 @@ eval_candidate_year <- function(
   mult <- pmin(mult, 5)  # prevent explosion
   nitrate_kgyr <- N0 * mult
   
-  c(nitrate_kgyr, -NR_total, Irr_m3_total)
+  result <- c(nitrate_kgyr, -NR_total, Irr_m3_total)
+
+  irrigation_diag <- df_irrig %>%
+    group_by(Crop) %>%
+    summarise(basin_irrigated_area_m2 = sum(area_m2, na.rm = TRUE), .groups = "drop") %>%
+    tidyr::complete(Crop = crops4, fill = list(basin_irrigated_area_m2 = 0)) %>%
+    mutate(Year = Y, .before = 1)
+
+  if (!is.null(irrigation_reference)) {
+    capture_by_crop <- irrigation_reference$crop_summary %>%
+      select(Domain, Crop, irrigated_area_m2) %>%
+      tidyr::pivot_wider(
+        names_from = Domain,
+        values_from = irrigated_area_m2,
+        names_prefix = "historical_irrigated_area_"
+      ) %>%
+      mutate(
+        historical_alluvial_capture = pmin(
+          1,
+          historical_irrigated_area_alluvial / historical_irrigated_area_basin
+        )
+      ) %>%
+      select(Crop, historical_alluvial_capture)
+
+    alluvial_land <- irrigation_reference$totals_by_year %>%
+      filter(Domain == "alluvial") %>%
+      summarise(
+        alluvial_cdl_cultivated_m2 = mean(cdl_cultivated_area_m2, na.rm = TRUE),
+        alluvial_expansion_eligible_m2 = mean(expansion_eligible_area_m2, na.rm = TRUE)
+      )
+
+    irrigation_diag <- irrigation_diag %>%
+      left_join(capture_by_crop, by = "Crop") %>%
+      mutate(
+        historical_alluvial_capture = coalesce(historical_alluvial_capture, 0),
+        estimated_alluvial_irrigated_area_m2 =
+          basin_irrigated_area_m2 * historical_alluvial_capture,
+        basin_irrigated_fraction_of_model_cultivated =
+          basin_irrigated_area_m2 / Cult_m2,
+        estimated_alluvial_fraction_of_cdl_cultivated =
+          estimated_alluvial_irrigated_area_m2 /
+          alluvial_land$alluvial_cdl_cultivated_m2,
+        alluvial_expansion_eligible_m2 =
+          alluvial_land$alluvial_expansion_eligible_m2
+      )
+  }
+
+  attr(result, "irrigation_diagnostics") <- irrigation_diag
+  result
 }
 
 eval_candidate_all_years <- function(
@@ -377,6 +481,7 @@ eval_candidate_all_years <- function(
     lu_baseline, universal_costs, crop_params,
     baseline_irrig_frac,
     hist_mix = NULL,
+    irrigation_reference = NULL,
     fert_ref_by_year,
     policy = NULL,
     weights = NULL,
@@ -384,7 +489,7 @@ eval_candidate_all_years <- function(
 ) {
   stopifnot(length(years_vec) > 0)
   
-  vals <- vapply(
+  vals_list <- lapply(
     years_vec,
     \(Y) eval_candidate_year(
       x = x, Y = Y,
@@ -399,13 +504,13 @@ eval_candidate_all_years <- function(
       crop_params = crop_params,
       baseline_irrig_frac = baseline_irrig_frac,
       hist_mix = hist_mix,
+      irrigation_reference = irrigation_reference,
       fert_ref_by_year = fert_ref_by_year,
       policy = policy
-    ),
-    numeric(3)
+    )
   )
-  
-  vals <- t(vals)
+
+  vals <- do.call(rbind, lapply(vals_list, as.numeric))
   colnames(vals) <- c("n_flux_kgyr", "neg_profit_usdyr", "irr_m3_yr")
   
   if (is.null(weights)) weights <- rep(1, nrow(vals))
@@ -425,5 +530,9 @@ eval_candidate_all_years <- function(
   )
   
   if (any(!is.finite(out))) out[] <- na_penalty
+  attr(out, "irrigation_diagnostics") <- bind_rows(
+    lapply(vals_list, attr, which = "irrigation_diagnostics")
+  )
   out
 }
+

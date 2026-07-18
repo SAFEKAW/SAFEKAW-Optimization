@@ -1,0 +1,19 @@
+climate_pathway,period,objective,fixed,bau,bau_minus_fixed,bau_vs_fixed_pct,units,preferred_direction
+rcp45,early,irrigation,24093063,21008156,-3084907,-13,m3/yr,lower
+rcp45,mid,irrigation,24215292,26020010,1804718,7,m3/yr,lower
+rcp45,late,irrigation,25509965,32431513,6921548,27,m3/yr,lower
+rcp85,early,irrigation,18506784,21065730,2558946,14,m3/yr,lower
+rcp85,mid,irrigation,20401686,28630275,8228589,40,m3/yr,lower
+rcp85,late,irrigation,21386484,35679593,14293109,67,m3/yr,lower
+rcp45,early,net_returns,139753919,158985995,19232076,14,USD/yr,higher
+rcp45,mid,net_returns,135418125,189789586,54371461,40,USD/yr,higher
+rcp45,late,net_returns,133707016,222767818,89060803,67,USD/yr,higher
+rcp85,early,net_returns,137470329,156113479,18643150,14,USD/yr,higher
+rcp85,mid,net_returns,128522249,179792429,51270180,40,USD/yr,higher
+rcp85,late,net_returns,120309984,200075915,79765931,66,USD/yr,higher
+rcp45,early,nitrate,10231856,10433099,201243,2,kg N/yr,lower
+rcp45,mid,nitrate,12074901,12695293,620392,5,kg N/yr,lower
+rcp45,late,nitrate,11471837,12429128,957291,8,kg N/yr,lower
+rcp85,early,nitrate,10938585,11153325,214740,2,kg N/yr,lower
+rcp85,mid,nitrate,12814755,13464180,649425,5,kg N/yr,lower
+rcp85,late,nitrate,16216048,17415619,1199572,7,kg N/yr,lower

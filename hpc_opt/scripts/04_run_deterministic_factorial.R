@@ -161,7 +161,9 @@ baseline_irrig_frac <- precomp_hist$baseline_irrig_frac
 # ---- economics ----
 universal_costs <- list(
   irr_cost_per_m3 = 0.029,
-  fert_share_direct = 0.2
+  fert_share_direct = 0.2,
+  nutrient_mgmt_full_cost_per_acre = 34.30,
+  nutrient_mgmt_max_reduction = 0.30
 )
 
 crop_params <- tibble::tribble(
@@ -245,8 +247,11 @@ res_list <- lapply(seq_len(nrow(scenario_path)), function(i) {
     fert_ref_by_year = pc$fert_ref_by_year,
     policy = policy,
     hist_mix = pc$hist_mix,
+    irrigation_reference = pc$irrigation_reference,
     shares_override = shares_override
   )
+
+  irrigation_diag <- attr(vals, "irrigation_diagnostics")
   
   tibble(
     combo_name = combo_name,
@@ -268,13 +273,61 @@ res_list <- lapply(seq_len(nrow(scenario_path)), function(i) {
     cap_rule = policy$cap_rule,
     cap_hit = all(vals == 1e12),
     fert_factor = policy$fert_factor,
+    fertilizer_reduction_fraction = pmax(0, 1 - policy$fert_factor),
+    nutrient_management_cost_usdyr =
+      (s$Cult_m2 / 4046.8564224) *
+      universal_costs$nutrient_mgmt_full_cost_per_acre *
+      pmin(
+        1,
+        pmax(0, 1 - policy$fert_factor) /
+          universal_costs$nutrient_mgmt_max_reduction
+      ),
     nitrate_kgyr = vals[1],
     neg_profit_usdyr = vals[2],
-    irrigation_m3yr = vals[3]
+    irrigation_m3yr = vals[3],
+    irrigation_diagnostics = list(irrigation_diag)
   )
 })
 
 res_df <- bind_rows(res_list)
+
+irrigation_domain_crop_df <- res_df %>%
+  select(
+    combo_name, climate_pathway, period, landuse_name,
+    irrigation_name, fertilizer_name, Year, irrigation_diagnostics
+  ) %>%
+  mutate(
+    irrigation_diagnostics = lapply(
+      irrigation_diagnostics,
+      function(x) dplyr::select(x, -any_of("Year"))
+    )
+  ) %>%
+  tidyr::unnest(irrigation_diagnostics)
+
+res_df <- res_df %>%
+  mutate(
+    basin_irrigated_area_m2 = vapply(
+      irrigation_diagnostics,
+      function(x) sum(x$basin_irrigated_area_m2, na.rm = TRUE),
+      numeric(1)
+    ),
+    basin_irrigated_fraction_of_model_cultivated = vapply(
+      irrigation_diagnostics,
+      function(x) sum(x$basin_irrigated_fraction_of_model_cultivated, na.rm = TRUE),
+      numeric(1)
+    ),
+    estimated_alluvial_irrigated_area_m2 = vapply(
+      irrigation_diagnostics,
+      function(x) sum(x$estimated_alluvial_irrigated_area_m2, na.rm = TRUE),
+      numeric(1)
+    ),
+    estimated_alluvial_irrigated_fraction_of_cdl_cultivated = vapply(
+      irrigation_diagnostics,
+      function(x) sum(x$estimated_alluvial_fraction_of_cdl_cultivated, na.rm = TRUE),
+      numeric(1)
+    )
+  ) %>%
+  select(-irrigation_diagnostics)
 
 # ---- summaries ----
 summary_period_df <- res_df %>%
@@ -284,6 +337,15 @@ summary_period_df <- res_df %>%
     mean_nitrate_kgyr = mean(nitrate_kgyr, na.rm = TRUE),
     mean_profit_usdyr = mean(-neg_profit_usdyr, na.rm = TRUE),
     mean_irrigation_m3yr = mean(irrigation_m3yr, na.rm = TRUE),
+    mean_nutrient_management_cost_usdyr =
+      mean(nutrient_management_cost_usdyr, na.rm = TRUE),
+    mean_basin_irrigated_area_m2 = mean(basin_irrigated_area_m2, na.rm = TRUE),
+    mean_basin_irrigated_fraction_of_model_cultivated =
+      mean(basin_irrigated_fraction_of_model_cultivated, na.rm = TRUE),
+    mean_estimated_alluvial_irrigated_area_m2 =
+      mean(estimated_alluvial_irrigated_area_m2, na.rm = TRUE),
+    mean_estimated_alluvial_irrigated_fraction_of_cdl_cultivated =
+      mean(estimated_alluvial_irrigated_fraction_of_cdl_cultivated, na.rm = TRUE),
     .groups = "drop"
   )
 
@@ -296,7 +358,16 @@ summary_overall_df <- res_df %>%
     fertilizer_name = first(fertilizer_name),
     mean_nitrate_kgyr = mean(nitrate_kgyr, na.rm = TRUE),
     mean_profit_usdyr = mean(-neg_profit_usdyr, na.rm = TRUE),
-    mean_irrigation_m3yr = mean(irrigation_m3yr, na.rm = TRUE)
+    mean_irrigation_m3yr = mean(irrigation_m3yr, na.rm = TRUE),
+    mean_nutrient_management_cost_usdyr =
+      mean(nutrient_management_cost_usdyr, na.rm = TRUE),
+    mean_basin_irrigated_area_m2 = mean(basin_irrigated_area_m2, na.rm = TRUE),
+    mean_basin_irrigated_fraction_of_model_cultivated =
+      mean(basin_irrigated_fraction_of_model_cultivated, na.rm = TRUE),
+    mean_estimated_alluvial_irrigated_area_m2 =
+      mean(estimated_alluvial_irrigated_area_m2, na.rm = TRUE),
+    mean_estimated_alluvial_irrigated_fraction_of_cdl_cultivated =
+      mean(estimated_alluvial_irrigated_fraction_of_cdl_cultivated, na.rm = TRUE)
   )
 
 # ---- write outputs ----
@@ -316,6 +387,11 @@ write_csv(
 write_csv(
   res_df,
   file.path(outdir, paste0("deterministic_results_", combo_name, ".csv"))
+)
+
+write_csv(
+  irrigation_domain_crop_df,
+  file.path(outdir, paste0("irrigation_area_by_domain_crop_", combo_name, ".csv"))
 )
 
 write_csv(

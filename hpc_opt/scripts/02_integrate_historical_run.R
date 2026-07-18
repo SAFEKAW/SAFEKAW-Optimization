@@ -16,7 +16,7 @@ suppressPackageStartupMessages({
 
 yrs_common <- 2006:2023
 
-# Inputs (use your original data folder for now)
+# Inputs (use original data folder for now)
 df_combined_county <- read_csv(
   here("hpc_opt", "outputs", "common_inputs_county_hist_baseline.csv"),
   show_col_types = FALSE

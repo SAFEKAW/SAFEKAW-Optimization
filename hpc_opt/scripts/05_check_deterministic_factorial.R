@@ -317,17 +317,33 @@ hist_obj_plot <- hist_obj %>%
   left_join(hist_irrig_common, by = "Year") %>%
   transmute(
     Year,
-    irrigation = irrigation_m3yr_hist,
-    nitrate = NitrateFluxPredicted_kg,
-    profit = NetReturn_total_usd
+    irrigation = irrigation_m3yr_hist / 1e6,
+    nitrate = NitrateFluxPredicted_kg / 1e6,
+    profit = NetReturn_total_usd / 1e6
   ) %>%
   pivot_longer(
     cols = c(irrigation, nitrate, profit),
     names_to = "metric",
     values_to = "value"
   ) %>%
+  mutate(
+    metric = recode(
+      metric,
+      irrigation = "Irrigation water use\n(million m³ yr⁻¹)",
+      nitrate = "Nitrate export\n(million kg N yr⁻¹)",
+      profit = "Net returns\n(million USD yr⁻¹)"
+    ),
+    metric = factor(
+      metric,
+      levels = c(
+        "Nitrate export\n(million kg N yr⁻¹)",
+        "Irrigation water use\n(million m³ yr⁻¹)",
+        "Net returns\n(million USD yr⁻¹)"
+      )
+    )
+  ) %>%
   tidyr::crossing(
-    climate_pathway = unique(summary_long$climate_pathway)
+    landuse_name = unique(summary_long$landuse_name)
   )
 
 hist_obj_plot %>%
@@ -455,13 +471,24 @@ p_traj_lumped <-
     color = NA
   ) +
   geom_line(linewidth = 1.3) +
+
+  geom_line(
+    data = hist_obj_plot,
+    aes(x = Year, y = value, group = landuse_name),
+    inherit.aes = FALSE,
+    color = "black",
+    linewidth = 1.05
+  ) +
   
   geom_vline(
-    xintercept = c(2025, 2050, 2075),
+    xintercept = c(2024, 2050, 2075),
     linetype = "dashed",
     color = "grey55",
     linewidth = 0.5
   ) +
+
+  annotate("text", x = 2014.5, y = Inf, label = "Historical",
+           vjust = 1.4, size = 3.5, color = "grey25") +
   
   annotate("text", x = 2037.5, y = Inf, label = "Early century",
            vjust = 1.4, size = 3.5, color = "grey25") +
@@ -496,8 +523,8 @@ p_traj_lumped <-
   ) +
   
   scale_x_continuous(
-    breaks = c(2025, 2050, 2075, 2100),
-    limits = c(2025, 2100),
+    breaks = c(2010, 2025, 2050, 2075, 2100),
+    limits = c(2005, 2100),
     expand = expansion(mult = c(0.01, 0.02))
   ) +
   
@@ -538,7 +565,7 @@ p_traj_lumped
 
 ggsave(
   here("hpc_opt","outputs","factorial_runs","figures","traj_lumped.png"),
-  p_traj_lumped, width = 7, height = 6, dpi = 300
+  p_traj_lumped, width = 8.5, height = 6, dpi = 300
 )
 p_traj_lumped
 

@@ -241,8 +241,8 @@ df_combined_county <- df_landcover_all_class %>%
   left_join(df_climate_county,by = c("Year","FIPS"))
 
 # ---- 7) Basin aggregation (TEMPORARY area weights) ----
-# NOTE: This replicates your current approach: county area is derived from landcover totals.
-#       Later you’ll swap this with true "county-in-watershed" clipped areas.
+# NOTE: This replicates current approach: county area is derived from landcover totals.
+#       Later swap this with true "county-in-watershed" clipped areas.
 df_county_areas <- df_landcover_county %>%
   group_by(FIPS) %>%
   summarise(area_m2 = sum(area_m2, na.rm = TRUE), .groups = "drop")
@@ -258,7 +258,7 @@ df_climate_basin <- df_climate_county %>%
   ) %>%
   mutate(Climate_Tmean_C = (Climate_Tmin_C + Climate_Tmax_C) / 2)
 
-# Basin irrigation depth: area-weighted over corn+soy area (as in your script)
+# Basin irrigation depth: area-weighted over corn+soy area 
 # Basin irrigation totals from actual alluvial water-use volume and irrigated area.
 # IMPORTANT:
 # - waterUse_m3 is actual groundwater withdrawal volume

@@ -79,17 +79,12 @@ if (length(missing_files) > 0) {
 common_input_basin <- read_csv(in_basin, show_col_types = FALSE)
 df_county <- read_csv(in_county, show_col_types = FALSE)
 
-# ---- build irrigation baseline pieces from alluvial water-use table ----
-wu_alluvial <- readr::read_csv(
-  here("data", "WaterUseByCrop_AlluvialCorridor.csv"),
-  show_col_types = FALSE
-)
-
 # For irrigation references, always use historical water-use years
 irrig_ref_years <- 2006:2023
 
-# For historical precompute, use the current scenario's basin table.
-# For future precompute, use already-built historical precomp as the land-cover denominator.
+# The evaluator's cultivated-area denominator is the historical modeled
+# LC_cult_base. Direct CDL denominators for both geographic domains are also
+# retained in irrigation_reference for reporting and future constraints.
 if (scenario_tag == "hist_baseline") {
   lu_for_irrig_ref <- common_input_basin %>%
     transmute(
@@ -104,19 +99,26 @@ if (scenario_tag == "hist_baseline") {
   lu_for_irrig_ref <- precomp_hist_ref$lu_baseline
 }
 
-hist_mix <- build_hist_mix_from_wateruse(
-  wu_by_crop = wu_alluvial,
-  df_county = df_county,
+irrigation_reference <- build_dual_domain_irrigation_reference(
+  wu_basin = read_csv(here("data", "WaterUseByCrop_EKSRB.csv"), show_col_types = FALSE),
+  wu_alluvial = read_csv(
+    here("data", "WaterUseByCrop_AlluvialCorridor.csv"), show_col_types = FALSE
+  ),
+  lu_basin = read_csv(here("data", "LandCoverData-CDL_EKSRB.csv"), show_col_types = FALSE),
+  lu_alluvial = read_csv(
+    here("data", "LandCoverData-CDL_AlluvialCorridor.csv"), show_col_types = FALSE
+  ),
+  model_basin_cultivated = lu_for_irrig_ref,
   years_vec = irrig_ref_years
 )
 
-baseline_irrig_frac <- build_baseline_irrig_frac_from_wateruse(
-  wu_by_crop = wu_alluvial,
-  lu_baseline = lu_for_irrig_ref,
-  years_vec = irrig_ref_years
-)
+baseline_irrig_frac <- irrigation_reference$evaluator$baseline_irrig_frac
+hist_mix <- irrigation_reference$evaluator$hist_mix
 
-message("baseline_irrig_frac from alluvial irrArea_ha = ", round(baseline_irrig_frac, 4))
+message(
+  "Evaluator baseline irrigated fraction (basin four-crop area / model cultivated area) = ",
+  round(baseline_irrig_frac, 4)
+)
 print(hist_mix)
 # ---- build precomp bundle ----
 precomp <- build_precomp(
@@ -124,7 +126,8 @@ precomp <- build_precomp(
   years_vec = years_vec,
   fert_ref_by_year = NULL,               # uses Management_FertilizerUse_kg from basin if present
   baseline_irrig_frac = baseline_irrig_frac,
-  hist_mix = hist_mix
+  hist_mix = hist_mix,
+  irrigation_reference = irrigation_reference
 )
 
 if (anyNA(precomp$lu_baseline$LC_cult_base) ||
@@ -140,6 +143,19 @@ str(precomp)
 
 # ---- baseline reference should only come from historical baseline ----
 if (scenario_tag == "hist_baseline") {
+  write_csv(
+    irrigation_reference$totals_by_year,
+    here("hpc_opt", "outputs", "precompute", "irrigation_reference_totals_by_domain_year.csv")
+  )
+  write_csv(
+    irrigation_reference$crop_by_year,
+    here("hpc_opt", "outputs", "precompute", "irrigation_reference_by_domain_crop_year.csv")
+  )
+  write_csv(
+    irrigation_reference$crop_summary,
+    here("hpc_opt", "outputs", "precompute", "irrigation_reference_by_domain_crop_summary.csv")
+  )
+
   baseline_mix <- get_baseline_obs_x(
     here("hpc_opt","outputs","integration","int_crop_areanorm_annual.csv")
   )

@@ -16,15 +16,19 @@ allocate_irrigation <- function(crop_shares,
   
   crop_shares <- crop_shares / sum(crop_shares)
   
-  if (mode == "uniform_by_crop" || is.null(hist_mix)) {
+  if (mode == "uniform_by_crop") {
     irrig  <- crop_shares * theta_irrig
     rainfed <- crop_shares - irrig
   } else {
-    if (!all(c("Crop", "irrig_frac") %in% names(hist_mix))) {
-      irrig  <- crop_shares * theta_irrig
-      rainfed <- crop_shares - irrig
+    if (is.null(hist_mix) || !is.data.frame(hist_mix) || nrow(hist_mix) == 0 ||
+        !all(c("Crop", "irrig_frac") %in% names(hist_mix))) {
+      stop("preserve_hist_mix requires a non-empty Crop/irrig_frac reference table.")
     } else {
       hm <- hist_mix[match(names(crop_shares), hist_mix$Crop), , drop = FALSE]
+      if (anyNA(hm$Crop)) {
+        stop("Historical irrigation mix is missing crops: ",
+             paste(names(crop_shares)[is.na(hm$Crop)], collapse = ", "))
+      }
       hist_frac <- hm$irrig_frac
       hist_frac[is.na(hist_frac)] <- 0
       hist_frac <- pmax(0, pmin(1, hist_frac))

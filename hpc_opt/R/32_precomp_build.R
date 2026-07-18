@@ -8,7 +8,8 @@ build_precomp <- function(common_input_basin,
                           years_vec,
                           fert_ref_by_year = NULL,
                           baseline_irrig_frac,
-                          hist_mix) {
+                          hist_mix,
+                          irrigation_reference = NULL) {
   
   df <- common_input_basin %>%
     filter(Year %in% years_vec) %>%
@@ -52,6 +53,7 @@ build_precomp <- function(common_input_basin,
     wq_base_by_year = wq_base_by_year,
     fert_ref_by_year = fert_ref_by_year,
     baseline_irrig_frac = baseline_irrig_frac,
-    hist_mix = hist_mix
+    hist_mix = hist_mix,
+    irrigation_reference = irrigation_reference
   )
 }

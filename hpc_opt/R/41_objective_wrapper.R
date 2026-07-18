@@ -25,6 +25,7 @@ make_objective_wrapper <- function(
     crop_params,
     baseline_irrig_frac,
     hist_mix,
+    irrigation_reference = NULL,
     fert_ref_by_year,
     policy,
     PEN = 1e12
@@ -55,6 +56,7 @@ make_objective_wrapper <- function(
         crop_params = crop_params,
         baseline_irrig_frac = baseline_irrig_frac,
         hist_mix = hist_mix,
+        irrigation_reference = irrigation_reference,
         fert_ref_by_year = fert_ref_by_year,
         policy = policy
       ),

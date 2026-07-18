@@ -126,6 +126,10 @@ for (sc in future_scenarios) {
 
 - Outputs:
 	- hpc_opt/outputs/factorial_runs/...
+	- annual and summary outputs include total modeled-crop irrigated area and
+	  irrigated fraction for both the whole basin and estimated alluvial corridor
+	- irrigation_area_by_domain_crop_<scenario>.csv contains the same accounting
+	  by crop; alluvial values use historical crop-specific corridor capture rates
 
 - run with:
 source(here::here("hpc_opt", "scripts", "04_run_factorial_all.R"))
