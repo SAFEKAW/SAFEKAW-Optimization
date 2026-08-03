@@ -3,9 +3,49 @@ suppressPackageStartupMessages({
   library(dplyr)
 })
 
+# Add any model-specific derived predictors using preprocessing metadata saved
+# with the fitted model. This keeps future scenarios on the historical training
+# scale instead of re-standardizing each projection period.
+prepare_yield_newdata <- function(m, newdata) {
+  scaling <- attr(m, "yield_scaling", exact = TRUE)
+  if (is.null(scaling)) return(newdata)
+
+  required_scaling <- c("water_center", "water_scale", "gdd_center", "gdd_scale")
+  missing_scaling <- setdiff(required_scaling, names(scaling))
+  if (length(missing_scaling) > 0) {
+    stop(
+      "Yield model has incomplete scaling metadata: ",
+      paste(missing_scaling, collapse = ", ")
+    )
+  }
+
+  required_data <- c("totalWater_m", "GDD", "Year")
+  missing_data <- setdiff(required_data, names(newdata))
+  if (length(missing_data) > 0) {
+    stop(
+      "Yield prediction data are missing: ",
+      paste(missing_data, collapse = ", ")
+    )
+  }
+
+  if (!is.finite(scaling$water_scale) || scaling$water_scale <= 0 ||
+      !is.finite(scaling$gdd_scale) || scaling$gdd_scale <= 0) {
+    stop("Yield model scaling standard deviations must be finite and positive.")
+  }
+
+  newdata %>%
+    mutate(
+      ZTotalWater = (totalWater_m - scaling$water_center) / scaling$water_scale,
+      ZGDD = (GDD - scaling$gdd_center) / scaling$gdd_scale,
+      Year_centered = Year - if (is.null(scaling$year_center)) 2005 else scaling$year_center
+    )
+}
+
 # helper: predict from either lm or lmer
 predict_one_yield_model <- function(m, newdata, fixed_only = TRUE) {
   if (is.null(m)) return(rep(NA_real_, nrow(newdata)))
+
+  newdata <- prepare_yield_newdata(m, newdata)
   
   # mixed model
   if (inherits(m, "lmerMod") || inherits(m, "lmerModLmerTest")) {

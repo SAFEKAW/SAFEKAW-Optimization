@@ -1,97 +1,186 @@
 # SAFEKAW Deterministic Pipeline
 
-This document describes the full deterministic modeling and scenario workflow for the SAFEKAW project.
+This document describes the deterministic SAFEKAW workflow, from climate preprocessing and common-input construction through model fitting, historical integration, future scenario runs, and checks.
 
-## Overview
+## Workflow at a glance
 
-The pipeline proceeds in five stages:
-0. Get climate data (historical + future) and put into workflow compatible inputs 
-1. Fit and save component statistical models
-2. Run historical integration
-3. Build scenario-specific precompute objects
-4. Run deterministic/factorial scenario analyses
-5. Summarize and quality-check outputs
+1. Build historical and future climate inputs.
+2. Build county- and basin-scale common inputs.
+3. Fit and save the component models.
+4. Integrate the historical baseline.
+5. Build historical and future precompute bundles.
+6. Run the deterministic factorial scenarios.
+7. Summarize and quality-check the scenario outputs.
 
-The full workflow can be run with:
+Climate extraction is an expensive preprocessing step and is not run by `hpc_opt/scripts/run_full_pipeline.R`. Common-input construction is part of the pipeline runner.
+
+## Packaged climate inputs
+
+Collaborators who do not need to regenerate the raw GridMET and MACA climate products can use the [SAFEKAW Climate Inputs — 2026-08-03 release](https://github.com/SAFEKAW/SAFEKAW-Optimization/releases/tag/climate-inputs-2026-08-03).
+
+Download:
+
+- [safekaw-climate-inputs-20260803.zip](https://github.com/SAFEKAW/SAFEKAW-Optimization/releases/download/climate-inputs-2026-08-03/safekaw-climate-inputs-20260803.zip)
+- [SHA-256 checksum file](https://github.com/SAFEKAW/SAFEKAW-Optimization/releases/download/climate-inputs-2026-08-03/safekaw-climate-inputs-20260803.sha256)
+
+Extract the archive at the repository root. It preserves the `data/` directory and installs the two historical climate inputs plus the twelve future ensemble inputs required by `run_full_pipeline.R`.
+
+PowerShell:
+
+```powershell
+Expand-Archive -LiteralPath safekaw-climate-inputs-20260803.zip -DestinationPath . -Force
+```
+
+macOS/Linux:
 
 ```bash
-Rscript hpc_opt/scripts/run_full_pipeline.R
+unzip -o safekaw-climate-inputs-20260803.zip
+```
 
-or in R console by 
+The published SHA-256 checksum should be:
+
+```text
+5732E67F9F009615A16029C8E1464F386EE059E880A44873425125938F4597BE
+```
+
+After extraction, run the complete deterministic workflow from the repository root:
+
+```r
 source(here::here("hpc_opt", "scripts", "run_full_pipeline.R"))
+```
 
+## Historical baseline common inputs
 
+The canonical entry point that creates the complete historical baseline common-input set is:
 
+`hpc_opt/scripts/01_build_historical_baseline_inputs.R`
 
-## Detailed description of scripts 
-0. Get climate data (precip, temp, and gdd) from two places
-	- 00_make_climate_inputs_gridmet.R for historical period
-	- 00_make_climate_inputs_maca for future periods, for each climate model (5) and each scenario (2; RCP 4.5 and 8.5)
-		- The individual GCM MACA files are intermediate products!
-	- Then use 00_make_climate_ensemble to create single climate files that average climate models 
-	- Run these all in 01_common_inputs_make.R using this line in console:
+That entry point configures and calls `hpc_opt/scripts/01_common_inputs_make.R`, which is the shared implementation for historical and future common inputs.
+
+With `scenario_tag <- "hist_baseline"` (the default), it writes:
+
+- `hpc_opt/outputs/common_inputs_county_hist_baseline.csv`
+- `hpc_opt/outputs/common_inputs_basin_hist_baseline.csv`
+- `hpc_opt/outputs/county_areas_hist_baseline.csv`
+
+Run it from the repository root with:
+
+```r
+source(here::here("hpc_opt", "scripts", "01_build_historical_baseline_inputs.R"))
+```
+
+For the historical baseline it reads:
+
+- `data/ClimateData_County.csv`
+- `data/crop_climate_gs_hist_baseline.csv`
+- `data/LandCoverData-CDL_County.csv`
+- `data/WaterUseData_County.csv`
+- `data/WaterUseByCrop_AlluvialCorridor.csv`
+
+It combines county climate, land cover, crop-specific irrigation, fertilizer assumptions, and growing-season climate. It then aggregates the basin table, including basin climate, cultivated/developed land cover, fertilizer use, and alluvial-corridor irrigation volume and irrigated area.
+
+### Relationship between the two scripts
+
+`01_build_historical_baseline_inputs.R` is the user-facing historical entry point. It always sets `scenario_tag <- "hist_baseline"` in an isolated environment and calls `01_common_inputs_make.R`.
+
+`01_common_inputs_make.R` contains the actual shared construction logic. It reads climate, land cover, county irrigation, alluvial-corridor water use, and crop growing-season climate; it then writes the county, basin, and county-area outputs. Future scenarios call this engine directly with a scenario and GCM/ensemble name.
+
+These common-input files feed the shared precompute stage, so the same historical baseline anchors both the deterministic and optimization evaluators.
+
+## 0. Build climate inputs
+
+These climate products are generally regenerated only when the underlying climate data or climate-processing logic changes.
+
+### Historical GridMET climate
+
+`hpc_opt/scripts/00_make_climate_inputs_gridmet.R` generates historical daily county climate and crop growing-season summaries. The current full-run output names are:
+
+- `data/ClimateData_County.csv`
+- `data/crop_climate_gs_hist_baseline.csv`
+- `data/gdd_all_gs.csv` (legacy GDD-only output)
+
+The crop growing-season file supplies `GDD` and `precip_gs_mm`. The daily climate file is summarized into annual precipitation and temperature fields by `01_common_inputs_make.R`.
+
+### Future MACA climate and ensemble
+
+- `hpc_opt/scripts/00_make_climate_inputs_maca.R` creates county climate and crop growing-season climate for each GCM and RCP/time-period combination.
+- `hpc_opt/scripts/00_make_climate_ensemble.R` averages the individual GCM products into ensemble files for the six future scenario tags: `rcp45_early`, `rcp45_mid`, `rcp45_late`, `rcp85_early`, `rcp85_mid`, and `rcp85_late`.
+- The individual-GCM files are intermediate products when the deterministic run uses `gcm_name <- "ensemble"`.
+
+HPC array-worker and submission scripts for the climate stage are also available in `hpc_opt/scripts/00_run_maca_climate_array_worker.R` and the `00_submit_*climate*.slurm` files.
+
+## 1. Build common inputs
+
+`hpc_opt/scripts/01_common_inputs_make.R` builds county, basin, and county-area files for one scenario at a time.
+
+Historical baseline (preferred entry point):
+
+```r
+source(here::here("hpc_opt", "scripts", "01_build_historical_baseline_inputs.R"))
+```
+
+Future ensemble scenarios:
+
+```r
 future_scenarios <- c(
   "rcp45_early", "rcp45_mid", "rcp45_late",
   "rcp85_early", "rcp85_mid", "rcp85_late"
 )
 
 for (sc in future_scenarios) {
-
-  message("\n==============================")
-  message("Running common inputs for: ", sc)
-  message("==============================\n")
-
   scenario_tag <- sc
   gcm_name <- "ensemble"
-
   source(here::here("hpc_opt", "scripts", "01_common_inputs_make.R"))
 }
+```
 
-#THIS IS NOT REPEATED EACH TIME AND ONLY DONE AT ONSET - below is scripts run each time the whole workflow is ran:
+Future outputs follow the pattern:
 
-1. 01_fit_and_save_models.R
+- `hpc_opt/outputs/common_inputs_county_<gcm>_<scenario>.csv`
+- `hpc_opt/outputs/common_inputs_basin_<gcm>_<scenario>.csv`
+- `hpc_opt/outputs/county_areas_<gcm>_<scenario>.csv`
 
-- Fits and saves the component models used throughout the workflow:
-	- irrigation model
-	- crop yield models
-	- water-quality model
+For future periods, historical mean land cover and water-use inputs are repeated across the relevant years; future climate varies by GCM/ensemble and scenario. Scenario-specific management changes are applied later by the policy/evaluation code.
 
-- Outputs:
-	- hpc_opt/models/irr_lm.rds
-	- hpc_opt/models/yield_kg_<Crop>.rds
-	- hpc_opt/models/yield_kcal_<Crop>.rds
-  	- hpc_opt/models/wq_lm.rds
+## 2. Fit and save component models
 
-- Also writes model diagnostics and validation figures to:
-	- hpc_opt/outputs/model_checks/
+`hpc_opt/scripts/01_fit_and_save_models.R` fits the irrigation, crop-yield, and water-quality models.
 
+Primary model outputs:
 
-2. 02_integrate_historical_run.R
+- `hpc_opt/models/irr_lm.rds`
+- `hpc_opt/models/yield_kg_<Crop>.rds`
+- `hpc_opt/models/yield_kcal_<Crop>.rds`
+- `hpc_opt/models/wq_lm.rds`
 
-- Uses the saved models to generate historical integrated outputs.
-- Inputs:
-	- historical common inputs
-	- observed yield data
-	- observed nitrate data
- 	- saved model .rds files
+Diagnostics, metrics, coefficients, and validation figures are written under `hpc_opt/outputs/model_checks/`.
 
-- Outputs:
-	- hpc_opt/outputs/integration/int_crop_areanorm_annual.csv
- 	- hpc_opt/outputs/integration/int_basin_annual.csv
- 	- hpc_opt/outputs/integration/irr_frac_annual.csv
+Optional yield-model checking scripts include:
 
+- `hpc_opt/scripts/01b_compare_yield_models.R`
+- `hpc_opt/scripts/01c_validate_yield_models.R`
 
+## 3. Integrate the historical baseline
 
-3. 03_precompute_inputs.R
+`hpc_opt/scripts/02_integrate_historical_run.R` reads both historical common-input files, observed crop yield and nitrate data, and the saved models. It writes:
 
-- Builds scenario-specific precompute bundles for optimization and deterministic runs. Run all from console using this: 
-# historical first
+- `hpc_opt/outputs/integration/int_crop_areanorm_annual.csv`
+- `hpc_opt/outputs/integration/int_basin_annual.csv`
+- `hpc_opt/outputs/integration/irr_frac_annual.csv`
+
+The historical integration outputs provide the historical anchors used by precomputation and deterministic result normalization.
+
+## 4. Build precompute bundles
+
+`hpc_opt/scripts/03_precompute_inputs.R` creates scenario-specific objects used by the deterministic evaluator. The historical precompute must be built before future precomputes because future runs reuse its irrigation and land-use references.
+
+```r
+# Historical first
 scenario_tag <- "hist_baseline"
-rm(gcm_name)
-
+if (exists("gcm_name")) rm(gcm_name)
 source(here::here("hpc_opt", "scripts", "03_precompute_inputs.R"))
 
-# future ensemble
+# Then future ensemble periods
 future_scenarios <- c(
   "rcp45_early", "rcp45_mid", "rcp45_late",
   "rcp85_early", "rcp85_mid", "rcp85_late"
@@ -100,46 +189,58 @@ future_scenarios <- c(
 for (sc in future_scenarios) {
   scenario_tag <- sc
   gcm_name <- "ensemble"
-
   source(here::here("hpc_opt", "scripts", "03_precompute_inputs.R"))
 }
+```
 
-- Inputs:
-	- common_inputs_basin_*
-	- common_inputs_county_*
-	- historical baseline integration outputs
+Primary outputs:
 
-- Outputs:
-	- hpc_opt/outputs/precompute/precomp_<scenario>.rds
-	- hpc_opt/outputs/precompute/precomp_<gcm>_<scenario>.rds
-	- hpc_opt/outputs/precompute/baseline_reference.rds
+- `hpc_opt/outputs/precompute/precomp_hist_baseline.rds`
+- `hpc_opt/outputs/precompute/precomp_<gcm>_<scenario>.rds`
+- `hpc_opt/outputs/precompute/baseline_reference.rds`
+- irrigation reference CSVs by domain, crop, and year
 
+## 5. Run deterministic factorial scenarios
 
-4. 04_run_factorial_all.R
+`hpc_opt/scripts/04_run_factorial_all.R` loops over the enabled configuration files and calls `04_run_deterministic_factorial.R` for each combination.
 
-- Loops across climate scenarios and GCMs and runs deterministic factorial scenarios. Actual engine for this script is 04_run_deterministic_factorial.R
+The current loop evaluates:
 
-- Inputs:
-	- saved model .rds files
- 	- precompute bundles
-	- scenario configuration files
+- climate source: ensemble
+- pathways: RCP 4.5 and RCP 8.5
+- land use: fixed and BAU
+- irrigation: current and efficient
+- fertilizer: current and efficient
 
-- Outputs:
-	- hpc_opt/outputs/factorial_runs/...
-	- annual and summary outputs include total modeled-crop irrigated area and
-	  irrigated fraction for both the whole basin and estimated alluvial corridor
-	- irrigation_area_by_domain_crop_<scenario>.csv contains the same accounting
-	  by crop; alluvial values use historical crop-specific corridor capture rates
+Run from an R session at the repository root:
 
-- run with:
+```r
 source(here::here("hpc_opt", "scripts", "04_run_factorial_all.R"))
+```
 
+Each scenario directory under `hpc_opt/outputs/factorial_runs/` contains:
 
-5. 05_check_deterministic_factorial.R
+- `scenario_path_<scenario>.csv`
+- `deterministic_results_<scenario>.csv`
+- `irrigation_area_by_domain_crop_<scenario>.csv`
+- `deterministic_summary_by_period_<scenario>.csv`
+- `deterministic_summary_overall_<scenario>.csv`
 
-- Reads deterministic/factorial outputs and generates summary tables and plots.
+Annual and summary outputs report the three objectives (nitrate export, irrigation withdrawals, and net returns) plus modeled-crop irrigated area and irrigated fractions for the whole basin and estimated alluvial corridor. Alluvial values use historical crop-specific corridor capture rates.
 
-- Outputs:
-	- scenario summaries
-	- normalized comparisons
-	- diagnostic plots
+## 6. Check and summarize deterministic runs
+
+`hpc_opt/scripts/05_check_deterministic_factorial.R` reads the factorial directories, compares results with the historical integration baseline, builds normalized summaries, and writes diagnostic figures under:
+
+- `hpc_opt/outputs/factorial_runs/figures/`
+
+Additional targeted checks include:
+
+- `hpc_opt/scripts/05_check_irrigation_denominators.R`
+- `hpc_opt/scripts/06_compare_irrigation_domains.R`
+
+## Pipeline runner and current limitation
+
+`hpc_opt/scripts/run_full_pipeline.R` builds the historical and future ensemble common inputs, fits models, integrates the historical baseline, builds precompute objects, runs the deterministic factorial scenarios, and performs the checks. It assumes the historical GridMET and future ensemble climate files already exist.
+
+The runner and `04_run_factorial_all.R` both use the ensemble climate source. Set the stage flags near the top of `run_full_pipeline.R` to skip outputs that do not need to be regenerated.

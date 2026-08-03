@@ -1,4 +1,8 @@
 suppressPackageStartupMessages({
+  # climateR must be the first spatial package attached in the KU Conda
+  # environment to avoid an Rcpp/UDUNITS initialization error.
+  library(climateR)
+  library(AOI)
   library(here)
   library(dplyr)
   library(tidyr)
@@ -6,31 +10,54 @@ suppressPackageStartupMessages({
   library(lubridate)
   library(sf)
   library(terra)
-  library(AOI)
-  library(climateR)
   library(exactextractr)
   library(readr)
   library(ggplot2)
-  library(pollen)
 })
 
 # ---- project helpers ----
-# adjust these if your helper files live elsewhere
-source(here("code", "paths+packages.R"))
-source(here("code", "calc_gdd.R"))
+source(here("hpc_opt", "R", "calc_gdd.R"))
 
 # ---- settings ----
-yrs_common <- 2006:2023
-start_date <- "2006-01-01"
-end_date   <- "2023-12-31"
+args <- commandArgs(trailingOnly = TRUE)
+get_arg <- function(flag, default = NULL) {
+  i <- match(flag, args)
+  if (is.na(i) || i == length(args)) return(default)
+  args[[i + 1]]
+}
+
+smoke_year <- suppressWarnings(as.integer(get_arg("--smoke-year", NA_character_)))
+is_smoke_test <- !is.na(smoke_year)
+
+if (is_smoke_test) {
+  yrs_common <- smoke_year
+  start_date <- paste0(smoke_year - 1L, "-10-01")
+  end_date <- paste0(smoke_year, "-12-31")
+  run_tag <- paste0("smoke_", smoke_year)
+} else {
+  yrs_common <- 2006:2023
+  start_date <- "2005-10-01"
+  end_date <- "2023-12-31"
+  run_tag <- "hist_baseline"
+}
+
+message("Running GridMET:")
+message("  start_date = ", start_date)
+message("  end_date   = ", end_date)
+message("  smoke_test = ", is_smoke_test)
 
 
 # ---- paths ----
-dir.create(here("data", "climate", "gridmet_raw"), recursive = TRUE, showWarnings = FALSE)
+climate_scratch <- Sys.getenv(
+  "SAFEKAW_CLIMATE_SCRATCH",
+  unset = here("data", "climate")
+)
+gridmet_raw_dir <- file.path(climate_scratch, "gridmet_raw_wheat_oct", run_tag)
+dir.create(gridmet_raw_dir, recursive = TRUE, showWarnings = FALSE)
 
-tmin_file   <- here("data", "climate", "gridmet_raw", "tmin.tif")
-tmax_file   <- here("data", "climate", "gridmet_raw", "tmax.tif")
-precip_file <- here("data", "climate", "gridmet_raw", "precip.tif")
+tmin_file   <- file.path(gridmet_raw_dir, "tmin.tif")
+tmax_file   <- file.path(gridmet_raw_dir, "tmax.tif")
+precip_file <- file.path(gridmet_raw_dir, "precip.tif")
 
 download_gridmet <- !all(file.exists(c(tmin_file, tmax_file, precip_file)))
 #download_gridmet <- FALSE #if already created
@@ -42,8 +69,28 @@ message(" - ", tmax_file)
 message(" - ", precip_file)
 message("download_gridmet = ", download_gridmet)
 
-out_climate <- here("data", "ClimateData_County.csv")
-out_gdd     <- here("data", "gdd_all_gs.csv")
+output_dir <- if (is_smoke_test) {
+  file.path(climate_scratch, "gridmet_smoke_outputs")
+} else {
+  here("data")
+}
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+if (is_smoke_test) {
+  out_climate <- file.path(output_dir, paste0("ClimateData_County_", run_tag, ".csv"))
+  out_gdd <- file.path(output_dir, paste0("gdd_all_gs_", run_tag, ".csv"))
+  out_crop_climate <- file.path(output_dir, paste0("crop_climate_gs_", run_tag, ".csv"))
+} else {
+  # Preserve established filenames consumed by downstream historical-model
+  # integration code.
+  out_climate <- file.path(output_dir, "ClimateData_County.csv")
+  out_gdd <- file.path(output_dir, "gdd_all_gs.csv")
+out_crop_climate <- file.path(output_dir, "crop_climate_gs_hist_baseline.csv")
+}
+
+# The full historical stack benefits from a larger GDAL cache during county
+# extraction. This remains comfortably below the 32 GB SLURM allocation.
+terra::gdalCache(8192)
 
 # ---- boundaries ----
 sf_counties  <- st_read(here("data", "Boundary_EKSRBcounties.gpkg"), quiet = TRUE)
@@ -60,17 +107,6 @@ if (st_crs(sf_corridor) != st_crs(sf_counties)) {
 
 clipped_counties <- st_intersection(sf_counties, sf_watershed)
 
-# optional check plot
-ggplot() +
-  geom_sf(data = sf_watershed, fill = "lightblue", color = "blue", alpha = 0.3) +
-  geom_sf(data = clipped_counties, fill = NA, color = "black", linewidth = 0.4) +
-  geom_sf(data = sf_corridor, fill = "orange", color = "red", alpha = 0.3) +
-  theme_minimal() +
-  labs(
-    title = "EKSRB watershed, clipped counties, and alluvial corridor",
-    caption = "Data: SafeKAW"
-  )
-
 # ---- AOI for GridMET ----
 bbox <- st_bbox(st_transform(sf_watershed, 4269)) %>%
   bbox_get()
@@ -78,13 +114,75 @@ bbox <- st_bbox(st_transform(sf_watershed, 4269)) %>%
 # ---- download raw GridMET rasters if needed ----
 if (download_gridmet) {
   message("Downloading GridMET daily rasters...")
-  
-  dat <- getGridMET(
-    AOI = bbox,
-    varname = c("pr", "tmmn", "tmmx"),
-    startDate = start_date,
-    endDate   = end_date
-  )
+
+  max_download_attempts <- suppressWarnings(as.integer(
+    Sys.getenv("SAFEKAW_DOWNLOAD_ATTEMPTS", unset = "4")
+  ))
+  if (is.na(max_download_attempts) || max_download_attempts < 1L) {
+    max_download_attempts <- 4L
+  }
+
+  dat <- NULL
+  last_download_error <- NULL
+  for (attempt in seq_len(max_download_attempts)) {
+    message("GridMET download attempt ", attempt, " of ", max_download_attempts)
+
+    dat <- tryCatch({
+      # GridMET's obsolete port-8080 source fails even during metadata
+      # inspection on KU. Rewrite the locally bundled catalog before
+      # climateR's dap_crop() opens any remote NetCDF resource.
+      climater_filter <- get("climater_filter", envir = asNamespace("climateR"))
+      gridmet_catalog <- climater_filter(
+        id = "gridmet",
+        AOI = bbox,
+        varname = c("pr", "tmmn", "tmmx")
+      )
+
+      old_nkn_host <- "http://thredds.northwestknowledge.net:8080"
+      new_nkn_host <- "https://tds-proxy.nkn.uidaho.edu"
+      gridmet_catalog$URL <- sub(
+        paste0("^", old_nkn_host),
+        new_nkn_host,
+        gridmet_catalog$URL
+      )
+
+      if (any(startsWith(gridmet_catalog$URL, old_nkn_host)) ||
+          !all(startsWith(gridmet_catalog$URL, new_nkn_host))) {
+        stop("GridMET URL rewrite away from the obsolete port-8080 host failed.")
+      }
+
+      message("GridMET request host(s): ", paste(unique(sub(
+        "^(https?://[^/]+).*$", "\\1", gridmet_catalog$URL
+      )), collapse = ", "))
+
+      climateR_dap <- get("dap", envir = asNamespace("climateR"))
+      climateR_dap(
+        catalog = gridmet_catalog,
+        AOI = bbox,
+        startDate = start_date,
+        endDate = end_date,
+        verbose = FALSE
+      )
+    }, error = function(e) {
+      last_download_error <<- conditionMessage(e)
+      message("GridMET attempt ", attempt, " failed: ", last_download_error)
+      NULL
+    })
+
+    if (!is.null(dat)) break
+    if (attempt < max_download_attempts) {
+      wait_seconds <- 20L * attempt
+      message("Waiting ", wait_seconds, " seconds before retry...")
+      Sys.sleep(wait_seconds)
+    }
+  }
+
+  if (is.null(dat)) {
+    stop(
+      "GridMET download failed after ", max_download_attempts,
+      " attempts. Last error: ", last_download_error
+    )
+  }
   
   gm_precip <- project(dat$precipitation_amount, "epsg:4269")
   gm_tmin   <- project(dat$daily_minimum_temperature, "epsg:4269")
@@ -164,7 +262,7 @@ ppt_means <- extract_daily_means(
 )
 
 # ---- combine into daily county climate table ----
-climate_daily <- tmin_means %>%
+climate_daily_all <- tmin_means %>%
   left_join(
     tmax_means,
     by = c("name", "FIPS", "Date", "Year", "Month", "Day")
@@ -177,7 +275,6 @@ climate_daily <- tmin_means %>%
     tmmn_C_gridmet = tmin_K - 273.15,
     tmmx_C_gridmet = tmax_K - 273.15
   ) %>%
-  filter(Year %in% yrs_common) %>%
   dplyr::select(
     FIPS, name, Date, Year, Month, Day,
     precip_mm_gridmet,
@@ -185,6 +282,81 @@ climate_daily <- tmin_means %>%
     tmmx_C_gridmet
   ) %>%
   arrange(FIPS, Date)
+
+climate_daily <- climate_daily_all %>%
+  filter(Year %in% yrs_common)
+
+# ---- temperature QC checks ----
+temp_crossings <- climate_daily %>%
+  filter(
+    is.finite(tmmn_C_gridmet),
+    is.finite(tmmx_C_gridmet),
+    tmmn_C_gridmet > tmmx_C_gridmet
+  ) %>%
+  mutate(excess_C = tmmn_C_gridmet - tmmx_C_gridmet)
+
+if (nrow(temp_crossings) > 0) {
+  message("GridMET Tmin/Tmax crossings before guarded correction:")
+  print(temp_crossings)
+
+  qc_dir <- file.path(climate_scratch, "qc")
+  dir.create(qc_dir, recursive = TRUE, showWarnings = FALSE)
+  crossings_file <- file.path(
+    qc_dir,
+    paste0("gridmet_temperature_crossings_", run_tag, ".csv")
+  )
+  write_csv(temp_crossings, crossings_file)
+
+  max_crossing_excess_C <- max(temp_crossings$excess_C, na.rm = TRUE)
+  if (nrow(temp_crossings) > 10L || max_crossing_excess_C > 0.5) {
+    stop(
+      "GridMET temperature QC failed: ", nrow(temp_crossings),
+      " crossing(s), maximum excess = ", round(max_crossing_excess_C, 3),
+      " C. Diagnostic: ", crossings_file
+    )
+  }
+
+  # For rare sub-0.5 C aggregation crossings, project Tmin/Tmax to their
+  # midpoint. This enforces physical ordering while preserving daily mean
+  # temperature—and therefore mean-temperature GDD—exactly.
+  warning(
+    "Correcting ", nrow(temp_crossings),
+    " isolated GridMET aggregation crossing(s) to their midpoint; audit: ",
+    crossings_file
+  )
+  climate_daily_all <- climate_daily_all %>%
+    mutate(
+      .crossing = is.finite(tmmn_C_gridmet) &
+        is.finite(tmmx_C_gridmet) &
+        tmmn_C_gridmet > tmmx_C_gridmet,
+      .midpoint = (tmmn_C_gridmet + tmmx_C_gridmet) / 2,
+      tmmn_C_gridmet = if_else(.crossing, .midpoint, tmmn_C_gridmet),
+      tmmx_C_gridmet = if_else(.crossing, .midpoint, tmmx_C_gridmet)
+    ) %>%
+    dplyr::select(-.crossing, -.midpoint)
+  climate_daily <- climate_daily_all %>%
+    filter(Year %in% yrs_common)
+}
+
+temp_qc <- climate_daily %>%
+  summarise(
+    tmin_min = min(tmmn_C_gridmet, na.rm = TRUE),
+    tmin_mean = mean(tmmn_C_gridmet, na.rm = TRUE),
+    tmin_max = max(tmmn_C_gridmet, na.rm = TRUE),
+    tmax_min = min(tmmx_C_gridmet, na.rm = TRUE),
+    tmax_mean = mean(tmmx_C_gridmet, na.rm = TRUE),
+    tmax_max = max(tmmx_C_gridmet, na.rm = TRUE),
+    n_tmin_gt_tmax = sum(tmmn_C_gridmet > tmmx_C_gridmet, na.rm = TRUE),
+    frac_tmin_gt_tmax = mean(tmmn_C_gridmet > tmmx_C_gridmet, na.rm = TRUE)
+  )
+
+print(temp_qc)
+if (temp_qc$n_tmin_gt_tmax > 0) {
+  stop("GridMET temperature QC failed: some daily tmin values exceed tmax.")
+}
+if (temp_qc$tmin_min < -50 || temp_qc$tmax_max > 60) {
+  warning("GridMET temperature QC warning: values are outside plausible Celsius range.")
+}
 
 # ---- quick checks ----
 print(names(climate_daily))
@@ -206,8 +378,6 @@ message("Wrote climate file: ", out_climate)
 
 
 # ---- outputs ----
-out_crop_climate <- here("data", "crop_climate_gs_hist_baseline.csv")
-
 # ---- helper to summarize one crop growing season ----
 calc_crop_climate_gs <- function(df,
                                  crop,
@@ -254,7 +424,7 @@ calc_crop_climate_gs <- function(df,
 }
 
 # ---- prep daily inputs for crop-season summaries ----
-climate_crop_daily <- climate_daily %>%
+climate_crop_daily <- climate_daily_all %>%
   transmute(
     name      = name,
     FIPS      = as.character(FIPS),
@@ -268,32 +438,28 @@ climate_crop_daily <- climate_daily %>%
   )
 
 # ---- crop-specific seasonal summaries ----
-crop_climate_corn <- calc_crop_climate_gs(
+crop_climate_corn <- summarize_crop_climate_gs(
   df       = climate_crop_daily,
   crop     = "Corn",
-  gs_start = "04-01",
-  gs_end   = "10-31"
+  target_years = yrs_common
 )
 
-crop_climate_soy <- calc_crop_climate_gs(
+crop_climate_soy <- summarize_crop_climate_gs(
   df       = climate_crop_daily,
   crop     = "Soybeans",
-  gs_start = "04-01",
-  gs_end   = "10-31"
+  target_years = yrs_common
 )
 
-crop_climate_sorg <- calc_crop_climate_gs(
+crop_climate_sorg <- summarize_crop_climate_gs(
   df       = climate_crop_daily,
   crop     = "Sorghum",
-  gs_start = "04-01",
-  gs_end   = "10-31"
+  target_years = yrs_common
 )
 
-crop_climate_wheat <- calc_crop_climate_gs(
+crop_climate_wheat <- summarize_crop_climate_gs(
   df       = climate_crop_daily,
   crop     = "Wheat",
-  gs_start = "01-01",
-  gs_end   = "06-30"
+  target_years = yrs_common
 )
 
 crop_climate_all <- bind_rows(
@@ -305,6 +471,8 @@ crop_climate_all <- bind_rows(
   mutate(FIPS = as.character(FIPS)) %>%
   dplyr::select(FIPS, Year, crop, GDD, n_days, precip_gs_mm, ppt_n_days) %>%
   arrange(crop, FIPS, Year)
+
+validate_crop_climate_completeness(crop_climate_all, yrs_common)
 
 # ---- quick checks ----
 crop_climate_all %>%

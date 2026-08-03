@@ -114,7 +114,8 @@ eval_candidate_year <- function(
   df_crop_y <- df_crop_y %>%
     select(any_of(c(
       "Year", "FIPS", "Crop", "area_m2", "area_ha", "area_prc",
-      "n_pdiv", "GDD", "precip_m", "tmax_C_avg", "tmin_C_avg",
+      "n_pdiv", "GDD", "precip_gs_mm", "precip_gs_m",
+      "precip_m", "tmax_C_avg", "tmin_C_avg",
       "fertilizer_kgHa", "fertilizer_kgCrop"
     ))) %>%
     left_join(
@@ -320,10 +321,23 @@ eval_candidate_year <- function(
       print(n = 50)
   }
   
-  # ---- predict yield using total water (efficiency does NOT affect yield) ----
+  # ---- predict yield using crop growing-season total water ----
+  # Annual precip_m remains available for the irrigation and water-quality
+  # models, but must not silently substitute for crop growing-season rainfall.
+  if ("precip_gs_m" %in% names(df_rows)) {
+    df_rows <- df_rows %>% mutate(precip_gs_m_use = precip_gs_m)
+  } else if ("precip_gs_mm" %in% names(df_rows)) {
+    df_rows <- df_rows %>% mutate(precip_gs_m_use = precip_gs_mm / 1000)
+  } else {
+    stop(
+      "Forward yield prediction requires crop-specific growing-season ",
+      "precipitation (`precip_gs_m` or `precip_gs_mm`)."
+    )
+  }
+
   df_rows <- df_rows %>%
     mutate(
-      totalWater_m = precip_m + irrigation_WaterUse_m
+      totalWater_m = precip_gs_m_use + irrigation_WaterUse_m
     )
   
   df_rows <- predict_yields(

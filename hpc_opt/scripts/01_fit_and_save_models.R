@@ -307,11 +307,43 @@ for (cr in crops) {
     )
   
   if (cr == "Wheat") {
-    m_kg <- lm (yield_kgHa_detrended ~ poly(totalWater_m, 2, raw = TRUE) + GDD,
-                 data = dat_cr)
-    
-    m_kcal <- lm (yield_kcalHa_detrended ~ poly(totalWater_m, 2, raw = TRUE) + GDD,
-                data = dat_cr)
+    wheat_scaling <- list(
+      water_center = mean(dat_cr$totalWater_m),
+      water_scale = sd(dat_cr$totalWater_m),
+      gdd_center = mean(dat_cr$GDD),
+      gdd_scale = sd(dat_cr$GDD),
+      year_center = 2005
+    )
+
+    if (!is.finite(wheat_scaling$water_scale) || wheat_scaling$water_scale <= 0 ||
+        !is.finite(wheat_scaling$gdd_scale) || wheat_scaling$gdd_scale <= 0) {
+      stop("Cannot fit wheat model: predictor standard deviations must be positive.")
+    }
+
+    dat_cr <- dat_cr %>%
+      mutate(
+        ZTotalWater = (totalWater_m - wheat_scaling$water_center) /
+          wheat_scaling$water_scale,
+        ZGDD = (GDD - wheat_scaling$gdd_center) / wheat_scaling$gdd_scale,
+        Year_centered = Year - wheat_scaling$year_center
+      )
+
+    wheat_formula_kg <- yield_kgHa_detrended ~
+      ZTotalWater + I(ZTotalWater^2) + I(ZTotalWater^3) +
+      ZGDD + Year_centered +
+      ZTotalWater:ZGDD + ZTotalWater:Year_centered +
+      (1 | FIPS)
+
+    wheat_formula_kcal <- update(
+      wheat_formula_kg,
+      yield_kcalHa_detrended ~ .
+    )
+
+    m_kg <- lmer(wheat_formula_kg, data = dat_cr, REML = TRUE)
+    m_kcal <- lmer(wheat_formula_kcal, data = dat_cr, REML = TRUE)
+
+    attr(m_kg, "yield_scaling") <- wheat_scaling
+    attr(m_kcal, "yield_scaling") <- wheat_scaling
   }
   
   else {
@@ -336,7 +368,96 @@ for (cr in crops) {
   saveRDS(m_kcal, here("hpc_opt","models", paste0("yield_kcal_", cr, ".rds")))
 }
 
-# diagnostics from final lm models
+# Wheat year-extrapolation diagnostic. Hold GDD at its historical median and
+# total water at representative historical dry/median/wet conditions, then
+# isolate the fixed-effect response through 2100.
+wheat_train <- df_crop %>%
+  filter(
+    Crop == "Wheat",
+    is.finite(totalWater_m),
+    is.finite(GDD)
+  )
+
+wheat_water_levels <- setNames(
+  as.numeric(
+    quantile(
+      wheat_train$totalWater_m,
+      probs = c(0.10, 0.50, 0.90),
+      na.rm = TRUE
+    )
+  ),
+  c("dry", "median", "wet")
+)
+
+wheat_projection_diagnostic <- tidyr::crossing(
+  Year = seq(min(yrs_common), 2100L),
+  water_condition = names(wheat_water_levels)
+) %>%
+  mutate(
+    totalWater_m = unname(wheat_water_levels[water_condition]),
+    GDD = median(wheat_train$GDD, na.rm = TRUE),
+    FIPS = as.character(wheat_train$FIPS[[1]]),
+    Crop = "Wheat"
+  )
+
+wheat_projection_diagnostic$yield_kgHa_pred_fixed <-
+  predict_one_yield_model(
+    yield_kg_models[["Wheat"]],
+    newdata = wheat_projection_diagnostic,
+    fixed_only = TRUE
+  )
+
+write_csv(
+  wheat_projection_diagnostic,
+  here(
+    "hpc_opt", "outputs", "model_checks",
+    "wheat_yield_year_extrapolation.csv"
+  )
+)
+
+p_wheat_year_extrapolation <- ggplot(
+  wheat_projection_diagnostic,
+  aes(
+    x = Year,
+    y = yield_kgHa_pred_fixed,
+    color = water_condition
+  )
+) +
+  geom_hline(yintercept = 0, color = "grey70", linewidth = 0.4) +
+  geom_line(linewidth = 0.9) +
+  geom_vline(
+    xintercept = max(yrs_common),
+    linetype = "dashed",
+    color = "grey40"
+  ) +
+  scale_color_brewer(
+    palette = "Dark2",
+    breaks = c("dry", "median", "wet")
+  ) +
+  labs(
+    x = "Year",
+    y = "Predicted detrended wheat yield (kg/ha)",
+    color = "Total-water condition",
+    title = "Wheat yield extrapolation from centered-year terms",
+    subtitle = paste0(
+      "GDD fixed at historical median; water fixed at historical ",
+      "10th, 50th, and 90th percentiles"
+    )
+  ) +
+  theme_bw()
+
+ggsave(
+  here(
+    "hpc_opt", "outputs", "model_checks", "figures",
+    "wheat_yield_year_extrapolation.png"
+  ),
+  p_wheat_year_extrapolation,
+  width = 8,
+  height = 5,
+  dpi = 300
+)
+
+# Diagnostics from the final saved model specifications.
 df_crop_pred <- predict_yields(
     df = df_crop,
     yield_kg_models = yield_kg_models,
@@ -347,9 +468,26 @@ df_crop_pred <- predict_yields(
 #lapply(yield_kg_models, lme4::isSingular, tol = 1e-5)
 #lapply(yield_kg_models, lme4::VarCorr)
 
-r2_df <- metrics_all %>%
-  group_by(Crop, Response) %>% 
-  filter(Response == "yield_kgHa_detrended", model == "lmer_full") %>%
+final_yield_metrics <- df_crop_pred %>%
+  group_by(Crop) %>%
+  summarise(
+    n = sum(complete.cases(yield_kgHa_detrended, yield_kgHa_pred)),
+    RMSE = rmse(yield_kgHa_pred, yield_kgHa_detrended),
+    MAE = mae(yield_kgHa_pred, yield_kgHa_detrended),
+    R2 = cor(
+      yield_kgHa_detrended,
+      yield_kgHa_pred,
+      use = "complete.obs"
+    )^2,
+    .groups = "drop"
+  )
+
+write_csv(
+  final_yield_metrics,
+  here("hpc_opt", "outputs", "model_checks", "yield_final_model_metrics.csv")
+)
+
+r2_df <- final_yield_metrics %>%
   mutate(label = paste0("R² = ", round(R2, 2)))
 
 
@@ -476,6 +614,8 @@ water_effect_df <- df_crop %>%
     water_min = min(totalWater_m, na.rm = TRUE),
     water_max = max(totalWater_m, na.rm = TRUE),
     GDD = mean(GDD, na.rm = TRUE),
+    Year = as.integer(round(mean(Year, na.rm = TRUE))),
+    FIPS = as.character(first(FIPS)),
     .groups = "drop"
   ) %>%
   rowwise() %>%
@@ -483,7 +623,9 @@ water_effect_df <- df_crop %>%
     tibble(
       Crop = .$Crop,
       totalWater_m = seq(.$water_min, .$water_max, length.out = 100),
-      GDD = .$GDD
+      GDD = .$GDD,
+      Year = .$Year,
+      FIPS = .$FIPS
     )
   }) %>%
   ungroup()

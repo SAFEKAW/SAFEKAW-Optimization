@@ -1,4 +1,8 @@
 suppressPackageStartupMessages({
+  # climateR must be the first spatial package attached in the KU Conda
+  # environment to avoid an Rcpp/UDUNITS initialization error.
+  library(climateR)
+  library(AOI)
   library(here)
   library(dplyr)
   library(tidyr)
@@ -6,37 +10,33 @@ suppressPackageStartupMessages({
   library(lubridate)
   library(sf)
   library(terra)
-  library(AOI)
-  library(climateR)
   library(exactextractr)
   library(readr)
   library(ggplot2)
-  library(pollen)
 })
 
 overwrite_extracts <- TRUE
 # ---- project helpers ----
-source(here("code", "paths+packages.R"))
-source(here("code", "calc_gdd.R"))
-
-#for manual testing
-scenario_tag <- "rcp85_late" #rcp45_early, rcp45_mid, rcp45_late, #rcp85_early, rcp85_mid,  rcp85_late
-maca_model   <- "GFDL-ESM2M"  #  GFDL-ESM2M	gfdl_esm2m
-gcm_name     <- "gfdl_esm2m"
-#CCSM4	ccsm4,BCC-CSM1-1	bcc_csm1_1, CanESM2	canesm2, 
+source(here("hpc_opt", "R", "calc_gdd.R"))
 
 # ---- scenario settings from command line ----
-#args <- commandArgs(trailingOnly = TRUE)
+args <- commandArgs(trailingOnly = TRUE)
 
-#get_arg <- function(flag, default = NULL) {
-#  i <- match(flag, args)
-#  if (is.na(i) || i == length(args)) return(default)
-#  args[[i + 1]]
-#}
+get_arg <- function(flag, default = NULL) {
+  i <- match(flag, args)
+  if (is.na(i) || i == length(args)) return(default)
+  args[[i + 1]]
+}
 
-#scenario_tag <- get_arg("--scenario_tag", "rcp45_early")
-#maca_model   <- get_arg("--maca_model", "CCSM4")
-#gcm_name     <- get_arg("--gcm_name", "ccsm4")
+if (!exists("scenario_tag")) {
+  scenario_tag <- get_arg("--scenario_tag", "rcp45_early")
+}
+if (!exists("maca_model")) {
+  maca_model <- get_arg("--maca_model", "CCSM4")
+}
+if (!exists("gcm_name")) {
+  gcm_name <- get_arg("--gcm_name", "ccsm4")
+}
 
 valid_scenarios <- c(
   "rcp45_early", "rcp45_mid", "rcp45_late",
@@ -58,10 +58,10 @@ if (is.na(maca_rcp)) {
 }
 
 period_lookup <- tibble::tribble(
-  ~period, ~start_date,   ~end_date,
-  "early", "2025-01-01",  "2049-12-31",
-  "mid",   "2050-01-01",  "2074-12-31",
-  "late",  "2075-01-01",  "2099-12-31"
+  ~period, ~target_start_year, ~target_end_year,
+  "early", 2025L, 2049L,
+  "mid",   2050L, 2074L,
+  "late",  2075L, 2099L
 )
 
 period_name <- str_remove(scenario_tag, "^rcp45_|^rcp85_")
@@ -73,9 +73,30 @@ if (nrow(this_period) != 1) {
   stop("scenario_tag period not found in period_lookup: ", scenario_tag)
 }
 
-start_date <- this_period$start_date[[1]]
-end_date   <- this_period$end_date[[1]]
-yrs_common <- seq(year(ymd(start_date)), year(ymd(end_date)))
+target_start_year <- this_period$target_start_year[[1]]
+target_end_year <- this_period$target_end_year[[1]]
+
+# Optional one-year end-to-end smoke test. This still includes October-
+# December of the previous year so the winter-wheat season is exercised.
+smoke_year <- suppressWarnings(as.integer(get_arg("--smoke-year", NA_character_)))
+is_smoke_test <- !is.na(smoke_year)
+run_tag <- scenario_tag
+if (is_smoke_test) {
+  if (smoke_year < target_start_year || smoke_year > target_end_year) {
+    stop(
+      "--smoke-year must fall within the selected scenario period (",
+      target_start_year, "-", target_end_year, ")."
+    )
+  }
+  target_start_year <- smoke_year
+  target_end_year <- smoke_year
+  run_tag <- paste0(scenario_tag, "_smoke_", smoke_year)
+}
+
+yrs_common <- seq(target_start_year, target_end_year)
+start_date <- paste0(target_start_year - 1L, "-10-01")
+end_date <- paste0(target_end_year, "-12-31")
+yrs_extract <- seq(target_start_year - 1L, target_end_year)
 
 message("Running MACA scenario:")
 message("  scenario_tag = ", scenario_tag)
@@ -84,23 +105,27 @@ message("  maca_model   = ", maca_model)
 message("  gcm_name     = ", gcm_name)
 message("  start_date   = ", start_date)
 message("  end_date     = ", end_date)
+message("  smoke_test   = ", is_smoke_test)
 
 
 
 
 # ---- paths ----
-raw_dir <- here("data", "climate", "maca_raw", gcm_name, scenario_tag)
-tmp_dir <- here("data", "climate", "maca_tmp", gcm_name, scenario_tag)
+climate_scratch <- Sys.getenv(
+  "SAFEKAW_CLIMATE_SCRATCH",
+  unset = here("data", "climate")
+)
+raw_dir <- file.path(climate_scratch, "maca_raw", gcm_name, run_tag)
+tmp_dir <- file.path(climate_scratch, "maca_tmp", gcm_name, run_tag)
 
 dir.create(raw_dir, recursive = TRUE, showWarnings = FALSE)
 dir.create(tmp_dir, recursive = TRUE, showWarnings = FALSE)
 
-tmin_file   <- here(raw_dir, paste0("tmin_", gcm_name, "_", scenario_tag, ".tif"))
-tmax_file   <- here(raw_dir, paste0("tmax_", gcm_name, "_", scenario_tag, ".tif"))
-precip_file <- here(raw_dir, paste0("precip_", gcm_name, "_", scenario_tag, ".tif"))
+tmin_file   <- file.path(raw_dir, paste0("tmin_", gcm_name, "_", run_tag, ".tif"))
+tmax_file   <- file.path(raw_dir, paste0("tmax_", gcm_name, "_", run_tag, ".tif"))
+precip_file <- file.path(raw_dir, paste0("precip_", gcm_name, "_", run_tag, ".tif"))
 
-#download_maca <- !all(file.exists(c(tmin_file, tmax_file, precip_file)))
-download_maca <- TRUE
+download_maca <- !all(file.exists(c(tmin_file, tmax_file, precip_file)))
 
 message("Raw raster targets:")
 message(" - ", tmin_file)
@@ -108,9 +133,16 @@ message(" - ", tmax_file)
 message(" - ", precip_file)
 message("download_maca = ", download_maca)
 
-out_climate <- here("data", paste0("ClimateData_County_", gcm_name, "_", scenario_tag, ".csv"))
-out_gdd     <- here("data", paste0("gdd_all_gs_", gcm_name, "_", scenario_tag, ".csv"))
-out_crop_climate <- here(  "data", paste0("crop_climate_gs_", gcm_name, "_", scenario_tag, ".csv"))
+output_dir <- if (is_smoke_test) {
+  file.path(climate_scratch, "smoke_outputs")
+} else {
+  here("data")
+}
+dir.create(output_dir, recursive = TRUE, showWarnings = FALSE)
+
+out_climate <- file.path(output_dir, paste0("ClimateData_County_", gcm_name, "_", run_tag, ".csv"))
+out_gdd <- file.path(output_dir, paste0("gdd_all_gs_", gcm_name, "_", run_tag, ".csv"))
+out_crop_climate <- file.path(output_dir, paste0("crop_climate_gs_", gcm_name, "_", run_tag, ".csv"))
 
 # optional: give GDAL a bit more cache
 terra::gdalCache(4096)
@@ -147,15 +179,76 @@ bbox <- st_bbox(st_transform(sf_watershed, 4269)) %>%
 # ---- download raw MACA rasters if needed ----
 if (download_maca) {
   message("Downloading MACA daily rasters...")
-  
-  dat <- getMACA(
-    AOI = bbox,
-    model = maca_model,
-    scenario = maca_rcp,
-    varname = c("pr", "tasmin", "tasmax"),
-    startDate = start_date,
-    endDate   = end_date
-  )
+
+  max_download_attempts <- suppressWarnings(as.integer(
+    Sys.getenv("SAFEKAW_DOWNLOAD_ATTEMPTS", unset = "4")
+  ))
+  if (is.na(max_download_attempts) || max_download_attempts < 1L) {
+    max_download_attempts <- 4L
+  }
+
+  dat <- NULL
+  last_download_error <- NULL
+  for (attempt in seq_len(max_download_attempts)) {
+    message(
+      "MACA download attempt ", attempt, " of ", max_download_attempts,
+      " (climateR will select the model's available ensemble)"
+    )
+
+    dat <- tryCatch({
+      # climateR's MACA catalog still points to an obsolete plain-HTTP host
+      # on port 8080, which KU compute nodes reset. Build the normal cropped
+      # request table, rewrite only that host to NKN's HTTPS proxy, and then
+      # use climateR's own downloader/assembler.
+      maca_request <- getMACA(
+        AOI = bbox,
+        model = maca_model,
+        scenario = maca_rcp,
+        varname = c("pr", "tasmin", "tasmax"),
+        startDate = start_date,
+        endDate = end_date,
+        dryrun = TRUE,
+        verbose = FALSE
+      )
+
+      old_maca_host <- "http://thredds.northwestknowledge.net:8080"
+      new_maca_host <- "https://tds-proxy.nkn.uidaho.edu"
+      maca_request$URL <- sub(
+        paste0("^", old_maca_host),
+        new_maca_host,
+        maca_request$URL
+      )
+
+      if (any(startsWith(maca_request$URL, old_maca_host)) ||
+          !all(startsWith(maca_request$URL, new_maca_host))) {
+        stop("MACA URL rewrite to the HTTPS proxy failed.")
+      }
+
+      message("Using MACA HTTPS proxy: ", new_maca_host)
+      climateR_dap_get <- get("dap_get", envir = asNamespace("climateR"))
+      climateR_dap_get(maca_request)
+    },
+      error = function(e) {
+        last_download_error <<- conditionMessage(e)
+        message("MACA attempt ", attempt, " failed: ", last_download_error)
+        NULL
+      }
+    )
+
+    if (!is.null(dat)) break
+    if (attempt < max_download_attempts) {
+      wait_seconds <- 20L * attempt
+      message("Waiting ", wait_seconds, " seconds before retry...")
+      Sys.sleep(wait_seconds)
+    }
+  }
+
+  if (is.null(dat)) {
+    stop(
+      "MACA download failed after ", max_download_attempts,
+      " attempts. Last error: ", last_download_error
+    )
+  }
   
   maca_precip <- project(dat$precipitation, "epsg:4269")
   
@@ -174,6 +267,18 @@ if (download_maca) {
   test_tmax <- global(maca_tmax[[1]], "mean", na.rm = TRUE)[1, 1]
   
   message("Raw MACA first-layer means: tasmin = ", test_tmin, "; tasmax = ", test_tmax)
+
+  # climateR can return the two air-temperature stacks with their values
+  # reversed relative to their layer labels. Correct both values and labels
+  # before caching so resumed jobs read semantically correct files.
+  if (is.finite(test_tmin) && is.finite(test_tmax) && test_tmin > test_tmax) {
+    message("Detected swapped MACA temperature stacks before caching -> correcting")
+    tmp <- maca_tmin
+    maca_tmin <- maca_tmax
+    maca_tmax <- tmp
+    names(maca_tmin) <- str_replace(names(maca_tmin), "tasmax", "tasmin")
+    names(maca_tmax) <- str_replace(names(maca_tmax), "tasmin", "tasmax")
+  }
   
   maca_tmin <- project(maca_tmin, "epsg:4269")
   maca_tmax <- project(maca_tmax, "epsg:4269")
@@ -290,7 +395,7 @@ tmin_means <- extract_daily_means_maca_by_year_fast(
   rast_obj = mintemp,
   polygons = clipped_counties_4269,
   value_name = "tmin_K",
-  years_vec = yrs_common,
+  years_vec = yrs_extract,
   tmp_dir = tmp_dir
 )
 
@@ -298,7 +403,7 @@ tmax_means <- extract_daily_means_maca_by_year_fast(
   rast_obj = maxtemp,
   polygons = clipped_counties_4269,
   value_name = "tmax_K",
-  years_vec = yrs_common,
+  years_vec = yrs_extract,
   tmp_dir = tmp_dir
 )
 
@@ -306,7 +411,7 @@ ppt_means <- extract_daily_means_maca_by_year_fast(
   rast_obj = ppt,
   polygons = clipped_counties_4269,
   value_name = "precip_mm_gridmet",
-  years_vec = yrs_common,
+  years_vec = yrs_extract,
   tmp_dir = tmp_dir
 )
 
@@ -324,7 +429,7 @@ stopifnot(
 )
 
 # ---- combine into daily county climate table ----
-climate_daily <- tmin_means %>%
+climate_daily_all <- tmin_means %>%
   left_join(
     tmax_means,
     by = c("name", "FIPS", "Date", "Year", "Month", "Day")
@@ -337,7 +442,6 @@ climate_daily <- tmin_means %>%
     tmmn_C_gridmet = tmin_K - 273.15,
     tmmx_C_gridmet = tmax_K - 273.15
   ) %>%
-  filter(Year %in% yrs_common) %>%
   dplyr::select(
     FIPS, name, Date, Year, Month, Day,
     precip_mm_gridmet,
@@ -346,6 +450,8 @@ climate_daily <- tmin_means %>%
   ) %>%
   arrange(FIPS, Date)
 
+climate_daily <- climate_daily_all %>%
+  filter(Year %in% yrs_common)
 
 # ---- temperature QC checks ----
 temp_qc <- climate_daily %>%
@@ -433,7 +539,7 @@ calc_crop_climate_gs <- function(df,
 }
 
 # ---- prep daily inputs for crop-season summaries ----
-climate_crop_daily <- climate_daily %>%
+climate_crop_daily <- climate_daily_all %>%
   transmute(
     name      = name,
     FIPS      = as.character(FIPS),
@@ -447,32 +553,28 @@ climate_crop_daily <- climate_daily %>%
   )
 
 # ---- crop-specific seasonal summaries ----
-crop_climate_corn <- calc_crop_climate_gs(
+crop_climate_corn <- summarize_crop_climate_gs(
   df       = climate_crop_daily,
   crop     = "Corn",
-  gs_start = "04-01",
-  gs_end   = "10-31"
+  target_years = yrs_common
 )
 
-crop_climate_soy <- calc_crop_climate_gs(
+crop_climate_soy <- summarize_crop_climate_gs(
   df       = climate_crop_daily,
   crop     = "Soybeans",
-  gs_start = "04-01",
-  gs_end   = "10-31"
+  target_years = yrs_common
 )
 
-crop_climate_sorg <- calc_crop_climate_gs(
+crop_climate_sorg <- summarize_crop_climate_gs(
   df       = climate_crop_daily,
   crop     = "Sorghum",
-  gs_start = "04-01",
-  gs_end   = "10-31"
+  target_years = yrs_common
 )
 
-crop_climate_wheat <- calc_crop_climate_gs(
+crop_climate_wheat <- summarize_crop_climate_gs(
   df       = climate_crop_daily,
   crop     = "Wheat",
-  gs_start = "01-01",
-  gs_end   = "06-30"
+  target_years = yrs_common
 )
 
 crop_climate_all <- bind_rows(
@@ -484,6 +586,8 @@ crop_climate_all <- bind_rows(
   mutate(FIPS = as.character(FIPS)) %>%
   dplyr::select(FIPS, Year, crop, GDD, n_days, precip_gs_mm, ppt_n_days) %>%
   arrange(crop, FIPS, Year)
+
+validate_crop_climate_completeness(crop_climate_all, yrs_common)
 
 if (nrow(crop_climate_all) == 0) {
   stop("Crop climate table is empty; check MACA dates and climate extraction.")

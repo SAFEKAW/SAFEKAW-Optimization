@@ -14,8 +14,10 @@ The purpose of this file is to access gridmet data from 2006-2024 for the EKSRB/
 library(here)
 #remotes::install_github("mikejohnson51/AOI") # suggested!
 #remotes::install_github("mikejohnson51/climateR")
-library(AOI)
+# Load climateR first to avoid a UDUNITS initialization conflict seen when
+# AOI is attached first in the KU Conda environment.
 library(climateR)
+library(AOI)
 
 getwd()
 source(here("code","paths+packages.R"))          #loads path & packages (from original files)

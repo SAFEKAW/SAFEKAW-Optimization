@@ -51,7 +51,8 @@ in_irrig     <- here::here("data", "WaterUseData_County.csv")
 in_irrig_alluvial <- here::here("data", "WaterUseByCrop_AlluvialCorridor.csv")
 
   if (!is_future) {
-    in_climate <- here::here("data", paste0("ClimateData_County_", scenario_tag, ".csv"))
+    # This is the full-run output from 00_make_climate_inputs_gridmet.R.
+    in_climate <- here::here("data", "ClimateData_County.csv")
     in_crop_climate <- here::here("data", paste0("crop_climate_gs_", scenario_tag, ".csv"))
     
     out_county <- here::here("hpc_opt", "outputs", paste0("common_inputs_county_", scenario_tag, ".csv"))
@@ -312,6 +313,16 @@ missing <- setdiff(required_cols, names(common_input_basin))
 if (length(missing) > 0) stop("Missing required cols in basin table: ", paste(missing, collapse = ", "))
 
 # ---- 8) Write outputs ----
+expected_years <- sort(unique(yrs_common))
+stopifnot(
+  nrow(df_combined_county) > 0,
+  nrow(common_input_basin) > 0,
+  identical(sort(unique(df_combined_county$Year)), expected_years),
+  identical(sort(unique(common_input_basin$Year)), expected_years),
+  !anyNA(df_combined_county$FIPS),
+  !anyNA(df_combined_county$LandCover)
+)
+
 readr::write_csv(df_combined_county, out_county)
 readr::write_csv(common_input_basin, out_basin)
 readr::write_csv(df_county_areas, out_areas)

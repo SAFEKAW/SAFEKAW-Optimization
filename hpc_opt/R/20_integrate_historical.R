@@ -56,8 +56,10 @@ integrate_historical <- function(df_combined_county,
     df_crop_base <- df_crop_base %>%
       mutate(precip_gs_m_use = precip_gs_mm / 1000)
   } else {
-    df_crop_base <- df_crop_base %>%
-      mutate(precip_gs_m_use = precip_m)
+    stop(
+      "Historical yield integration requires crop-specific growing-season ",
+      "precipitation (`precip_gs_m` or `precip_gs_mm`)."
+    )
   }
   
   df_crop_base <- df_crop_base %>%
@@ -96,7 +98,7 @@ integrate_historical <- function(df_combined_county,
     df = df_crop,
     yield_kg_models   = models$yield_kg,
     yield_kcal_models = models$yield_kcal,
-    fixed_only = TRUE
+    fixed_only = FALSE
   )
   
   # For compatibility with your economics wrapper
