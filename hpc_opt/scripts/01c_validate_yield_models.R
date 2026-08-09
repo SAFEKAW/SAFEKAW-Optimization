@@ -329,8 +329,8 @@ ggsave(
 # -------------------------------------------------------------------------
 
 models <- load_models(here("hpc_opt", "models"))
-wheat_full <- models$yield_kg[["Wheat"]]
-wheat_scaling <- attr(wheat_full, "yield_scaling", exact = TRUE)
+wheat_production <- models$yield_kg[["Wheat"]]
+wheat_scaling <- attr(wheat_production, "yield_scaling", exact = TRUE)
 wheat_all <- yield_data %>% filter(Crop == "Wheat")
 wheat_all_scaled <- add_scaled_predictors(wheat_all, wheat_scaling)
 wheat_no_water_year <- lmer(
@@ -347,11 +347,25 @@ wheat_climate_only <- lmer(
 )
 attr(wheat_climate_only, "yield_scaling") <- wheat_scaling
 
+wheat_with_water_year <- lmer(
+  wheat_formula_with_water_year,
+  data = wheat_all_scaled,
+  REML = TRUE
+)
+attr(wheat_with_water_year, "yield_scaling") <- wheat_scaling
+
+if (!identical(
+  paste(deparse(formula(wheat_production)), collapse = " "),
+  paste(deparse(formula(wheat_climate_only)), collapse = " ")
+)) {
+  stop("The saved production wheat model is not the climate-only specification.")
+}
+
 wheat_in_sample_comparison <- imap_dfr(
   list(
     wheat_climate_only = wheat_climate_only,
     wheat_no_water_year = wheat_no_water_year,
-    wheat_with_water_year = wheat_full
+    wheat_with_water_year = wheat_with_water_year
   ),
   function(model_object, model_name) {
     pred <- predict_one_yield_model(
@@ -391,14 +405,14 @@ write_csv(
 
 plot_models <- c(
   models$yield_kg,
-  Wheat_climate_only = list(wheat_climate_only),
-  Wheat_no_water_year = list(wheat_no_water_year)
+  Wheat_no_water_year = list(wheat_no_water_year),
+  Wheat_with_water_year = list(wheat_with_water_year)
 )
 
 extrapolation <- imap_dfr(plot_models, function(model, model_key) {
   crop <- if (model_key %in% c(
-    "Wheat_climate_only",
-    "Wheat_no_water_year"
+    "Wheat_no_water_year",
+    "Wheat_with_water_year"
   )) {
     "Wheat"
   } else {
@@ -422,12 +436,12 @@ extrapolation <- imap_dfr(plot_models, function(model, model_key) {
   ) %>%
     mutate(
       Crop = crop,
-      model = if (model_key == "Wheat_climate_only") {
-        "wheat_climate_only"
-      } else if (model_key == "Wheat_no_water_year") {
+      model = if (model_key == "Wheat_no_water_year") {
         "wheat_no_water_year"
-      } else if (crop == "Wheat") {
+      } else if (model_key == "Wheat_with_water_year") {
         "wheat_with_water_year"
+      } else if (crop == "Wheat") {
+        "wheat_climate_only"
       } else {
         "current"
       },

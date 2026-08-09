@@ -81,20 +81,15 @@ decode_management <- function(x, phase) {
   
   mgmt <- list(
     fert_factor = 1,
-    irr_eff = 1,
     irrig_frac_factor = 1
   )
   
-  if (phase %in% c("crop_fert", "crop_fert_irreff", "crop_fert_irreff_irrigfrac")) {
+  if (phase %in% c("crop_fert", "crop_fert_irrigfrac")) {
     mgmt$fert_factor <- x[5]
   }
   
-  if (phase %in% c("crop_fert_irreff", "crop_fert_irreff_irrigfrac")) {
-    mgmt$irr_eff <- x[6]
-  }
-  
-  if (phase %in% c("crop_fert_irreff_irrigfrac")) {
-    mgmt$irrig_frac_factor <- x[7]
+  if (phase == "crop_fert_irrigfrac") {
+    mgmt$irrig_frac_factor <- x[6]
   }
   
   mgmt
@@ -130,14 +125,13 @@ make_objective_wrapper <- function(
       return(c(nitrate = PEN, profit_minimized = PEN, irrigation = PEN))
     }
     
-    # decode management variables from x[5], x[6], x[7] depending on phase
+    # Irrigation technology is fixed by the scenario policy, not optimized.
     mgmt <- decode_management(x, phase)
     
     # make a candidate-specific copy of policy
     policy_i <- policy
     
     policy_i$fert_factor <- mgmt$fert_factor
-    policy_i$irr_eff <- mgmt$irr_eff
     policy_i$irrig_frac_factor <- mgmt$irrig_frac_factor
     
     x_eval <- c(

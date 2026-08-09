@@ -67,11 +67,17 @@ if (length(run_dirs) == 0) stop("No factorial run folders found.")
 # ---- helper to read one combo ----
 read_one_combo <- function(dir_path) {
   files <- list.files(dir_path, full.names = TRUE)
-  
-  res_file <- files[str_detect(basename(files), "^deterministic_results_.*\\.csv$")]
-  sum_period_file <- files[str_detect(basename(files), "^deterministic_summary_by_period_.*\\.csv$")]
-  sum_overall_file <- files[str_detect(basename(files), "^deterministic_summary_overall_.*\\.csv$")]
-  path_file <- files[str_detect(basename(files), "^scenario_path_.*\\.csv$")]
+
+  prefer_current <- function(current_name, legacy_pattern) {
+    current <- files[basename(files) == current_name]
+    if (length(current) == 1L) return(current)
+    files[str_detect(basename(files), legacy_pattern)]
+  }
+
+  res_file <- prefer_current("deterministic_results.csv", "^deterministic_results_.*\\.csv$")
+  sum_period_file <- prefer_current("summary_by_period.csv", "^deterministic_summary_by_period_.*\\.csv$")
+  sum_overall_file <- prefer_current("summary_overall.csv", "^deterministic_summary_overall_.*\\.csv$")
+  path_file <- prefer_current("scenario_path.csv", "^scenario_path_.*\\.csv$")
   
   if (length(res_file) != 1 || length(sum_period_file) != 1 ||
       length(sum_overall_file) != 1 || length(path_file) != 1) {
@@ -93,11 +99,29 @@ summary_period_all <- bind_rows(map(combo_list, "summary_by_period"))
 summary_overall_all <- bind_rows(map(combo_list, "summary_overall"))
 path_all <- bind_rows(map(combo_list, "path"))
 
+required_management_cols <- c(
+  "irrigation_technology_name", "irrigation_extent_name"
+)
+if (!all(required_management_cols %in% names(results_all)) ||
+    !all(required_management_cols %in% names(summary_period_all)) ||
+    !all(required_management_cols %in% names(summary_overall_all))) {
+  stop("Deterministic outputs do not contain the shared irrigation scenario axes.")
+}
+results_all <- results_all %>%
+  filter(if_all(all_of(required_management_cols), ~ !is.na(.x)))
+summary_period_all <- summary_period_all %>%
+  filter(if_all(all_of(required_management_cols), ~ !is.na(.x)))
+summary_overall_all <- summary_overall_all %>%
+  filter(if_all(all_of(required_management_cols), ~ !is.na(.x)))
+
 # ---- add combo labels if missing ----
 add_combo_name <- function(df) {
   if (!"combo_name" %in% names(df)) {
     df %>%
-      mutate(combo_name = paste(landuse_name, irrigation_name, fertilizer_name, climate_pathway, sep = "__"))
+      mutate(combo_name = paste(
+        landuse_name, irrigation_technology_name, irrigation_extent_name,
+        fertilizer_name, climate_pathway, sep = "__"
+      ))
   } else {
     df
   }
@@ -118,7 +142,8 @@ results_plot <- results_all %>%
 
 # ---- factor ordering ----
 landuse_levels <- c("fixed", "bau", "crp")
-irrig_levels   <- c("current", "efficient", "expand_area", "contract_area")
+irrig_technology_levels <- c("current", "efficient")
+irrig_extent_levels <- c("baseline", "expanded")
 fert_levels    <- c("current", "efficient")
 climate_levels <- c("rcp45", "rcp85")
 period_levels  <- c("early", "mid", "late")
@@ -126,7 +151,14 @@ period_levels  <- c("early", "mid", "late")
 summary_plot <- summary_plot %>%
   mutate(
     landuse_name = factor(landuse_name, levels = intersect(landuse_levels, unique(landuse_name))),
-    irrigation_name = factor(irrigation_name, levels = intersect(irrig_levels, unique(irrigation_name))),
+    irrigation_technology_name = factor(
+      irrigation_technology_name,
+      levels = intersect(irrig_technology_levels, unique(irrigation_technology_name))
+    ),
+    irrigation_extent_name = factor(
+      irrigation_extent_name,
+      levels = intersect(irrig_extent_levels, unique(irrigation_extent_name))
+    ),
     fertilizer_name = factor(fertilizer_name, levels = intersect(fert_levels, unique(fertilizer_name))),
     climate_pathway = factor(climate_pathway, levels = intersect(climate_levels, unique(climate_pathway))),
     period = factor(period, levels = intersect(period_levels, unique(period)))
@@ -135,7 +167,14 @@ summary_plot <- summary_plot %>%
 results_plot <- results_plot %>%
   mutate(
     landuse_name = factor(landuse_name, levels = levels(summary_plot$landuse_name)),
-    irrigation_name = factor(irrigation_name, levels = levels(summary_plot$irrigation_name)),
+    irrigation_technology_name = factor(
+      irrigation_technology_name,
+      levels = levels(summary_plot$irrigation_technology_name)
+    ),
+    irrigation_extent_name = factor(
+      irrigation_extent_name,
+      levels = levels(summary_plot$irrigation_extent_name)
+    ),
     fertilizer_name = factor(fertilizer_name, levels = levels(summary_plot$fertilizer_name)),
     climate_pathway = factor(climate_pathway, levels = levels(summary_plot$climate_pathway)),
     period = factor(period, levels = levels(summary_plot$period))
@@ -143,7 +182,10 @@ results_plot <- results_plot %>%
 
 profit_area_plot <- results_plot %>%
   mutate(
-    mgmt = paste(irrigation_name, fertilizer_name, sep = " | "),
+    mgmt = paste(
+      irrigation_technology_name, irrigation_extent_name,
+      fertilizer_name, sep = " | "
+    ),
     profit_per_ha = profit_usdyr / (Cult_m2 / 10000)
   )
 
@@ -221,7 +263,8 @@ results_norm <- results_plot %>%
 traj_long <- results_plot %>%
   select(
     Year, combo_name, climate_pathway, period,
-    landuse_name, irrigation_name, fertilizer_name,
+    landuse_name, irrigation_technology_name, irrigation_extent_name,
+    fertilizer_name,
     nitrate_kgyr, irrigation_m3yr, profit_usdyr
   ) %>%
   pivot_longer(
@@ -236,7 +279,10 @@ traj_long <- results_plot %>%
       irrigation_m3yr = "Irrigation",
       profit_usdyr = "Net return"
     ),
-    mgmt = paste(irrigation_name, fertilizer_name, sep = " | ")
+    mgmt = paste(
+      irrigation_technology_name, irrigation_extent_name,
+      fertilizer_name, sep = " | "
+    )
   )
 
 p_traj <- ggplot(
@@ -567,13 +613,89 @@ ggsave(
   here("hpc_opt","outputs","factorial_runs","figures","traj_lumped.png"),
   p_traj_lumped, width = 8.5, height = 6, dpi = 300
 )
+ggsave(
+  here("hpc_opt", "outputs", "factorial_runs", "figures",
+       "deterministic_trajectories_historical_future_clippedcdf_20260808.png"),
+  p_traj_lumped, width = 10.5, height = 7.5, dpi = 300
+)
+ggsave(
+  here("hpc_opt", "outputs", "factorial_runs", "figures",
+       "deterministic_trajectories_historical_future_clippedcdf_20260808.pdf"),
+  p_traj_lumped, width = 10.5, height = 7.5
+)
 p_traj_lumped
+
+# Future-only manuscript version matching the original six-panel layout.
+p_traj_future <- ggplot(
+  summary_long_plot,
+  aes(x = Year, y = mean, color = climate_pathway, fill = climate_pathway)
+) +
+  geom_ribbon(aes(ymin = min, ymax = max), alpha = 0.18, color = NA) +
+  geom_line(linewidth = 1.2) +
+  geom_vline(
+    xintercept = c(2025, 2050, 2075),
+    linetype = "dashed", color = "grey55", linewidth = 0.45
+  ) +
+  annotate("text", x = 2037.5, y = Inf, label = "Early century",
+           vjust = 1.35, size = 3.25, color = "grey25") +
+  annotate("text", x = 2062.5, y = Inf, label = "Mid century",
+           vjust = 1.35, size = 3.25, color = "grey25") +
+  annotate("text", x = 2087.5, y = Inf, label = "Late century",
+           vjust = 1.35, size = 3.25, color = "grey25") +
+  facet_grid(
+    metric ~ landuse_name,
+    scales = "free_y",
+    labeller = labeller(landuse_name = landuse_labels)
+  ) +
+  scale_color_manual(
+    name = "Climate pathway",
+    values = c(rcp45 = "skyblue", rcp85 = "maroon"),
+    labels = climate_labels
+  ) +
+  scale_fill_manual(
+    name = "Climate pathway",
+    values = c(rcp45 = "skyblue", rcp85 = "maroon"),
+    labels = climate_labels
+  ) +
+  scale_x_continuous(
+    breaks = c(2025, 2050, 2075, 2100),
+    limits = c(2024, 2100),
+    expand = expansion(mult = c(0.01, 0.02))
+  ) +
+  labs(x = NULL, y = NULL) +
+  guides(
+    fill = "none",
+    color = guide_legend(override.aes = list(linewidth = 1.8, alpha = 1))
+  ) +
+  theme_test(base_size = 14) +
+  theme(
+    strip.background = element_rect(fill = "grey92", color = NA),
+    strip.text = element_text(face = "bold", size = 11),
+    legend.position = "bottom",
+    legend.title = element_text(face = "bold"),
+    axis.text = element_text(color = "black"),
+    panel.spacing = unit(0.9, "lines"),
+    axis.text.x = element_text(angle = 45, hjust = 1, vjust = 1)
+  )
+
+ggsave(
+  here("hpc_opt", "outputs", "factorial_runs", "figures",
+       "deterministic_trajectories_future_clippedcdf_20260808.png"),
+  p_traj_future, width = 8.5, height = 7.5, dpi = 300
+)
+ggsave(
+  here("hpc_opt", "outputs", "factorial_runs", "figures",
+       "deterministic_trajectories_future_clippedcdf_20260808.pdf"),
+  p_traj_future, width = 8.5, height = 7.5
+)
 
 
 
 #raw
 profile_raw <- summary_plot %>%
-  select(combo_name, climate_pathway, period, landuse_name, irrigation_name, fertilizer_name,
+  select(
+    combo_name, climate_pathway, period, landuse_name,
+    irrigation_technology_name, irrigation_extent_name, fertilizer_name,
          mean_nitrate_kgyr, mean_irrigation_m3yr, mean_profit_usdyr) %>%
   pivot_longer(
     cols = c(mean_nitrate_kgyr, mean_irrigation_m3yr, mean_profit_usdyr),
@@ -593,7 +715,7 @@ p_profile_raw <- ggplot(
   profile_raw,
   aes(x = landuse_name, y = value, color = fertilizer_name)
 ) +
-  geom_point(aes(shape = irrigation_name),
+  geom_point(aes(shape = irrigation_technology_name),
              size = 3,
              position = position_dodge(width = 0.45)) +
   facet_grid(objective ~ period + climate_pathway, scales = "free_y") +
@@ -617,7 +739,8 @@ ggsave(
 profile_norm <- summary_norm %>%
   select(
     combo_name, climate_pathway, period,
-    landuse_name, irrigation_name, fertilizer_name,
+    landuse_name, irrigation_technology_name, irrigation_extent_name,
+    fertilizer_name,
     norm_n, norm_i, norm_p
   ) %>%
   pivot_longer(

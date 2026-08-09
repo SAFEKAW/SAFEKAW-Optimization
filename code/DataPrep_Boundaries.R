@@ -7,8 +7,8 @@
 # 
 # Shapefiles created are:
 #  - Boundary_EKSRBwatershed.gpkg = Boundary for EKSRB watershed extent.
-#  - Boundary_EKSRBcounties.gpkg = Boundaries for each county within EKSRB focus domain, including
-#        percent of county that is within EKSRB watershed.
+#  - Boundary_EKSRBcounties.gpkg = County polygons clipped to the EKSRB watershed,
+#        including both clipped and full-county areas.
 #  - Boundary_EKSRBalluvialCorridor.gpkg = Boundary for alluvial corridor where most irrigated agriculture
 #        is located in watershed.
 # Output is saved in `data` folder.
@@ -37,28 +37,32 @@ sf_watershed_out <-
   dplyr::select(geometry)
 sf_watershed_out$area_ha <- as.numeric(st_area(sf_watershed_out)/10000) # convert m^2 to ha
 
-## counties - desired attribute columns: name, FIPS, area_ha, watershedOverlap_prc
-sf_counties_out <-
+## counties - retain full-county area, then clip geometry to the watershed
+sf_counties_full <-
   sf_counties_in |> 
   # get rid of Jackson County MO and Dickinson County KS
   filter(!(FIPS %in% c(29095, 20041))) |> 
   st_transform(domain_crs) |> 
   dplyr::select(NAME, FIPS) |> 
   rename(name = NAME)
-sf_counties_out$area_ha <- as.numeric(st_area(sf_counties_out)/10000) # convert m^2 to ha
+sf_counties_full$fullCountyArea_ha <- as.numeric(st_area(sf_counties_full) / 10000)
 
-# Calculate the intersection of the counties with the watershed
-sf_intersection <- 
-  st_intersection(sf_counties_out, sf_watershed_out) %>%
-  mutate(watershedOverlap_ha = as.numeric(st_area(.)/10000)) |> 
-  st_drop_geometry() |> 
-  dplyr::select(name, watershedOverlap_ha)
+# The saved geometry is the county portion inside the EKSRB. Keeping the
+# historical watershedOverlap_* fields preserves compatibility downstream,
+# while area_ha now correctly describes the saved (clipped) geometry.
+sf_counties_out <-
+  st_intersection(sf_counties_full, sf_watershed_out |> dplyr::select())
+sf_counties_out$area_ha <- as.numeric(st_area(sf_counties_out) / 10000)
+sf_counties_out <- sf_counties_out |>
+  mutate(
+    watershedOverlap_ha = area_ha,
+    watershedOverlap_prc = watershedOverlap_ha / fullCountyArea_ha
+  ) |>
+  dplyr::select(name, FIPS, area_ha, fullCountyArea_ha,
+                watershedOverlap_ha, watershedOverlap_prc)
 
-# Join the intersection areas back to the original counties
-sf_counties_out <- 
-  sf_counties_out |> 
-  left_join(sf_intersection, by = "name") |> 
-  mutate(watershedOverlap_prc = watershedOverlap_ha/area_ha)
+stopifnot(nrow(sf_counties_out) == 17)
+stopifnot(abs(sum(sf_counties_out$area_ha) - sf_watershed_out$area_ha) < 1)
 
 ## corridor - desired attribute columns: area_ha
 sf_corridor_out <- 

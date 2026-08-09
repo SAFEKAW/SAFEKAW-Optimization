@@ -24,6 +24,15 @@ The optimization workflow currently evaluates tradeoffs among:
 	- Irrigation water use (minimize)
 using the NSGA-II multi-objective evolutionary algorithm (in R; mco::nsga2()).
 
+All workflows use the same management definitions. Irrigation technology,
+irrigated extent, and fertilizer configurations live under
+`hpc_opt/config/irrigation_technology/`,
+`hpc_opt/config/irrigation_extent/`, and `hpc_opt/config/fertilizer/`.
+The unconstrained benchmark fixes all three at current/baseline conditions.
+The constrained workflow selects current or efficient irrigation technology as
+a fixed scenario and records whether fertilizer and irrigated extent are fixed
+or optimized.
+
 Current decision variables:
 	- Corn fraction
 	- Soybean fraction
@@ -43,6 +52,43 @@ Opt. 1. Command line:
 
 Opt. 2. R console by 
 system('Rscript hpc_opt/scripts/04_run_optimization.R --climate rcp45 --period early --landuse fixed --seed 1')
+
+## Unconstrained HPC staging workflow
+
+Generate and validate the 12-context, one-seed smoke grid:
+
+```bash
+Rscript hpc_opt/scripts/06_make_optimization_grid.R \
+  --seeds 101 --popsize 8 --generations 3 \
+  --run-tag unconstrained_smoke \
+  --output hpc_opt/outputs/optimization_grid_unconstrained_smoke.csv
+Rscript hpc_opt/scripts/06_preflight_optimization.R \
+  --grid hpc_opt/outputs/optimization_grid_unconstrained_smoke.csv
+sbatch --array=1-12%3 \
+  --export=ALL,GRID_FILE=hpc_opt/outputs/optimization_grid_unconstrained_smoke.csv \
+  hpc_opt/scripts/06_submit_optimization_array.slurm
+```
+
+Generate, validate, and submit the representative three-budget benchmark:
+
+```bash
+Rscript hpc_opt/scripts/06_make_benchmark_grid.R
+Rscript hpc_opt/scripts/06_preflight_optimization.R \
+  --grid hpc_opt/outputs/optimization_grid_unconstrained_benchmark.csv
+sbatch --array=1-3%1 \
+  --export=ALL,GRID_FILE=hpc_opt/outputs/optimization_grid_unconstrained_benchmark.csv \
+  hpc_opt/scripts/06_submit_optimization_array.slurm
+Rscript hpc_opt/scripts/06_summarize_optimization_benchmark.R
+```
+
+The benchmark summary reports runtime, objective ranges, and dominated
+hypervolume after normalizing all benchmark fronts to common objective ranges.
+Select production settings only after checking that additional computation
+produces a sufficiently small hypervolume/front change. Then generate the
+20-seed grid with those settings and submit `--array=1-240` with an appropriate
+concurrency throttle. Array workers validate existing outputs before skipping
+them and write one status manifest per job under
+`hpc_opt/outputs/optimization_manifests/<run_tag>/`.
 
 
 ## Detailed description of scripts 
@@ -87,21 +133,69 @@ See SAFEKAW Deterministic Pipeline for details on how to run steps 1-3 if needed
 
 Default management bounds in `04_run_optimization_constrained.R` are:
 
-- fertilizer application factor: 0.70 to 1.00 (0 to 30% reduction);
-- irrigation efficiency: 1.00 to 1.176470588 (0 to 15% withdrawal savings);
+- fertilizer application factor uses the shared efficient and current scenario
+  definitions (currently 0.70 to 1.00, or a 0 to 30% reduction);
+- irrigation technology is a fixed scenario selected with `--irrigation`:
+  - `current`: `irr_eff = 1.0` (no withdrawal savings);
+  - `efficient`: `irr_eff = 1.176470588` (15% withdrawal savings);
 - irrigation extent is held at baseline until the
-  `crop_fert_irreff_irrigfrac` phase.
-- irrigation extent in the final phase is limited to 0.85 to 1.15 times the
-  historical baseline fraction;
+  `crop_fert_irrigfrac` phase.
+- irrigation extent in the final phase uses the shared baseline and expanded
+  definitions (currently 1.00 to 1.15 times the historical baseline fraction);
 - estimated alluvial target-crop irrigation cannot exceed expansion-eligible
   alluvial area after reserving historical non-target irrigation.
 
-The bounds can be overridden with `--fert-factor-min`, `--fert-factor-max`,
-`--irr-eff-min`, and `--irr-eff-max`. Yield is held constant for both levers.
-Fertilizer reduction has the recurring nutrient-management cost described
-below; irrigation efficiency currently has no technology/adoption cost.
+Fertilizer bounds can be overridden with `--fert-factor-min` and
+`--fert-factor-max`. Fertilizer reduction has the recurring
+nutrient-management cost described below. Irrigation technology is not an
+optimization decision and has no separate adoption charge. The efficient
+scenario holds yield and irrigated extent constant while reducing withdrawals
+and their associated pumping cost by 15%.
 Irrigation-extent bounds can be overridden with `--irrig-frac-min` and
 `--irrig-frac-max`.
+
+Run both irrigation technology scenarios with otherwise identical settings:
+
+```bash
+Rscript hpc_opt/scripts/04_run_optimization_constrained.R \
+  --climate rcp45 --period early --landuse fixed \
+  --phase crop_fert --irrigation current --seed 1
+Rscript hpc_opt/scripts/04_run_optimization_constrained.R \
+  --climate rcp45 --period early --landuse fixed \
+  --phase crop_fert --irrigation efficient --seed 1
+```
+
+The constrained batch runner automatically crosses both irrigation scenarios
+with climate, period, and land-use contexts. Scenario and output names include
+`current` or `efficient` to prevent paired runs from overwriting one another.
+
+For HPC execution, use the same resumable array worker as the unconstrained
+workflow. A one-seed smoke grid contains 72 jobs: 12 climate/period/land-use
+contexts, two irrigation technologies, and three constraint phases.
+
+```bash
+Rscript hpc_opt/scripts/06_make_constrained_optimization_grid.R \
+  --seeds 1 --popsize 8 --generations 3 \
+  --run-tag-prefix constrained_smoke \
+  --output hpc_opt/outputs/optimization_grid_constrained_smoke.csv
+Rscript hpc_opt/scripts/06_preflight_optimization.R \
+  --grid hpc_opt/outputs/optimization_grid_constrained_smoke.csv
+sbatch --array=1-72%6 \
+  --export=ALL,GRID_FILE=hpc_opt/outputs/optimization_grid_constrained_smoke.csv \
+  hpc_opt/scripts/06_submit_optimization_array.slurm
+```
+
+After the array finishes, audit manifests and output presence. The command
+returns a nonzero status if any job is missing, failed, or incomplete:
+
+```bash
+Rscript hpc_opt/scripts/06_audit_optimization_grid.R \
+  --grid hpc_opt/outputs/optimization_grid_constrained_smoke.csv
+```
+
+The same generator can then create a production grid with the selected
+population, generation, seed, and array-concurrency settings. Completed output
+files are validated and skipped automatically when an array is resubmitted.
 
 ### Nutrient-management cost
 

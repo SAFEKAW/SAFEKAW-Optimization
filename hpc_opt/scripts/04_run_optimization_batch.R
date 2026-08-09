@@ -16,6 +16,7 @@ gcm_name <- "ensemble"
 climates <- c("rcp45", "rcp85")
 periods <- c("early", "mid", "late")
 landuses <- c("fixed", "bau")
+irrigation_scenarios <- c("current", "efficient")
 seeds <- as.integer(get_arg("--seed", "1"))
 phase <- get_arg("--phase", "unconstrained")
 popsize <- as.integer(get_arg("--popsize", "8"))
@@ -33,14 +34,22 @@ grid <- expand.grid(
   climate = climates,
   period = periods,
   landuse = landuses,
+  irrigation = if (constrained) irrigation_scenarios else "current",
   seed = seeds,
   stringsAsFactors = FALSE
 )
 
 for (i in seq_len(nrow(grid))) {
-  scenario_name <- paste(
-    grid$landuse[i], gcm_name, grid$climate[i], grid$period[i], sep = "_"
-  )
+  scenario_name <- if (constrained) {
+    paste(
+      grid$landuse[i], grid$irrigation[i], gcm_name,
+      grid$climate[i], grid$period[i], sep = "_"
+    )
+  } else {
+    paste(
+      grid$landuse[i], gcm_name, grid$climate[i], grid$period[i], sep = "_"
+    )
+  }
   expected_output <- if (constrained) {
     here(
       "hpc_opt", "outputs", "runs", phase, scenario_name,
@@ -70,7 +79,9 @@ for (i in seq_len(nrow(grid))) {
   )
 
   if (constrained) {
-    cmd_args <- paste(cmd_args, "--phase", phase)
+    cmd_args <- paste(
+      cmd_args, "--phase", phase, "--irrigation", grid$irrigation[i]
+    )
   }
 
   cmd <- sprintf(

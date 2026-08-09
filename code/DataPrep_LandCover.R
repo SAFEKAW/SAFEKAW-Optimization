@@ -29,6 +29,12 @@ sf_corridor <- st_read(file.path("data", "Boundary_EKSRBalluvialCorridor.gpkg"))
 sf_counties <- st_read(file.path("data", "Boundary_EKSRBcounties.gpkg"))
 sf_watershed <- st_read(file.path("data", "Boundary_EKSRBwatershed.gpkg"))
 
+# Boundary_EKSRBcounties.gpkg must contain county geometries clipped to the
+# watershed. This prevents whole-county CDL pixels from entering basin inputs.
+stopifnot(nrow(sf_counties) == 17)
+stopifnot(abs(sum(as.numeric(st_area(sf_counties))) -
+              sum(as.numeric(st_area(sf_watershed)))) < 1e4)
+
 
 # extract CDL data for corridor and watershed ----------------------------------------
 
@@ -288,6 +294,18 @@ df_county_area <-
   summarise(total_area_ha = sum(area_ha)) |> 
   ungroup() |> 
   left_join(st_drop_geometry(sf_counties), by = "FIPS")
+
+stopifnot(n_distinct(cdl_countyByGroup$FIPS) == 17)
+
+county_year_area_check <- cdl_countyByGroup |>
+  group_by(Year) |>
+  summarise(area_ha = sum(area_ha), .groups = "drop")
+watershed_year_area_check <- cdl_byGroup |>
+  filter(domain == "watershed") |>
+  group_by(Year) |>
+  summarise(area_ha = sum(area_ha), .groups = "drop")
+stopifnot(all(abs(county_year_area_check$area_ha -
+                  watershed_year_area_check$area_ha) < 100))
 
 ggplot(df_county_area, aes(x = total_area_ha, y = area_ha)) +
   geom_abline(intercept = 0, slope = 1, color = col.gray) +

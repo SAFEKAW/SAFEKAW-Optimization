@@ -37,8 +37,15 @@ get_precomp_for_year <- function(Y, precomp_early, precomp_mid, precomp_late) {
 if (!exists("landuse_file")) {
   landuse_file <- here("hpc_opt","config","landuse","bau.yaml")
 }
-if (!exists("irrigation_file")) {
-  irrigation_file <- here("hpc_opt","config","irrigation","current.yaml")
+if (!exists("irrigation_technology_file")) {
+  irrigation_technology_file <- here(
+    "hpc_opt", "config", "irrigation_technology", "current.yaml"
+  )
+}
+if (!exists("irrigation_extent_file")) {
+  irrigation_extent_file <- here(
+    "hpc_opt", "config", "irrigation_extent", "baseline.yaml"
+  )
 }
 if (!exists("fertilizer_file")) {
   fertilizer_file <- here("hpc_opt","config","fertilizer","current.yaml")
@@ -55,19 +62,22 @@ if (!exists("gcm_name") || is.null(gcm_name) || gcm_name == "") {
 }
 
 message("Using landuse_file = ", landuse_file)
-message("Using irrigation_file = ", irrigation_file)
+message("Using irrigation_technology_file = ", irrigation_technology_file)
+message("Using irrigation_extent_file = ", irrigation_extent_file)
 message("Using fertilizer_file = ", fertilizer_file)
 message("Using gcm_name = ", gcm_name)
 message("Using climate_pathway = ", climate_pathway)
 
 
-landuse_cfg    <- read_config_yaml(landuse_file)
-irrigation_cfg <- read_config_yaml(irrigation_file)
+landuse_cfg <- read_config_yaml(landuse_file)
+irrigation_technology_cfg <- read_config_yaml(irrigation_technology_file)
+irrigation_extent_cfg <- read_config_yaml(irrigation_extent_file)
 fertilizer_cfg <- read_config_yaml(fertilizer_file)
 
 combo_name <- paste(
   landuse_cfg$name,
-  irrigation_cfg$name,
+  irrigation_technology_cfg$name,
+  irrigation_extent_cfg$name,
   fertilizer_cfg$name,
   gcm_name,
   climate_pathway,
@@ -169,7 +179,7 @@ universal_costs <- list(
 crop_params <- tibble::tribble(
   ~Crop,      ~income_per_kg, ~direct_cost_per_kg, ~fixed_cost_per_kg, ~total_cost_per_kg, ~fert_kgha,
   "Wheat",     0.2,           0.12,                0.05,               0.17,               90,
-  "Corn",      0.18,          0.11,                0.05,               0.15,              250,
+  "Corn",      0.18,          0.11,                0.05,               0.16,              250,
   "Sorghum",   0.17,          0.09,                0.06,               0.15,              110,
   "Soybeans",  0.37,          0.18,                0.14,               0.32,               55
 ) %>%
@@ -192,7 +202,8 @@ scenario_path <- build_scenario_path(
   mutate(period = vapply(Year, assign_period, character(1)))
 
 policy_base <- build_policy_from_configs(
-  irrigation_cfg = irrigation_cfg,
+  irrigation_technology_cfg = irrigation_technology_cfg,
+  irrigation_extent_cfg = irrigation_extent_cfg,
   fertilizer_cfg = fertilizer_cfg
 )
 
@@ -258,7 +269,8 @@ res_list <- lapply(seq_len(nrow(scenario_path)), function(i) {
     climate_pathway = climate_pathway,
     period = s$period,
     landuse_name = landuse_cfg$name,
-    irrigation_name = irrigation_cfg$name,
+    irrigation_technology_name = irrigation_technology_cfg$name,
+    irrigation_extent_name = irrigation_extent_cfg$name,
     fertilizer_name = fertilizer_cfg$name,
     Year = s$Year,
     cult_area_factor = s$cult_area_factor,
@@ -269,6 +281,7 @@ res_list <- lapply(seq_len(nrow(scenario_path)), function(i) {
     wheat = s$wheat,
     irrig_frac_factor = policy$irrig_frac_factor,
     irr_eff = policy$irr_eff,
+    irrigation_water_savings_fraction = 1 - 1 / policy$irr_eff,
     irrig_area_cap_m2 = as.numeric(policy$irrig_area_cap_m2),
     cap_rule = policy$cap_rule,
     cap_hit = all(vals == 1e12),
@@ -294,7 +307,8 @@ res_df <- bind_rows(res_list)
 irrigation_domain_crop_df <- res_df %>%
   select(
     combo_name, climate_pathway, period, landuse_name,
-    irrigation_name, fertilizer_name, Year, irrigation_diagnostics
+    irrigation_technology_name, irrigation_extent_name,
+    fertilizer_name, Year, irrigation_diagnostics
   ) %>%
   mutate(
     irrigation_diagnostics = lapply(
@@ -332,7 +346,8 @@ res_df <- res_df %>%
 # ---- summaries ----
 summary_period_df <- res_df %>%
   group_by(combo_name, climate_pathway, period,
-           landuse_name, irrigation_name, fertilizer_name) %>%
+           landuse_name, irrigation_technology_name,
+           irrigation_extent_name, fertilizer_name) %>%
   summarise(
     mean_nitrate_kgyr = mean(nitrate_kgyr, na.rm = TRUE),
     mean_profit_usdyr = mean(-neg_profit_usdyr, na.rm = TRUE),
@@ -354,7 +369,8 @@ summary_overall_df <- res_df %>%
     combo_name = first(combo_name),
     climate_pathway = first(climate_pathway),
     landuse_name = first(landuse_name),
-    irrigation_name = first(irrigation_name),
+    irrigation_technology_name = first(irrigation_technology_name),
+    irrigation_extent_name = first(irrigation_extent_name),
     fertilizer_name = first(fertilizer_name),
     mean_nitrate_kgyr = mean(nitrate_kgyr, na.rm = TRUE),
     mean_profit_usdyr = mean(-neg_profit_usdyr, na.rm = TRUE),
@@ -381,27 +397,27 @@ print(summary_overall_df)
 
 write_csv(
   scenario_path,
-  file.path(outdir, paste0("scenario_path_", combo_name, ".csv"))
+  file.path(outdir, "scenario_path.csv")
 )
 
 write_csv(
   res_df,
-  file.path(outdir, paste0("deterministic_results_", combo_name, ".csv"))
+  file.path(outdir, "deterministic_results.csv")
 )
 
 write_csv(
   irrigation_domain_crop_df,
-  file.path(outdir, paste0("irrigation_area_by_domain_crop_", combo_name, ".csv"))
+  file.path(outdir, "irrigation_by_crop.csv")
 )
 
 write_csv(
   summary_period_df,
-  file.path(outdir, paste0("deterministic_summary_by_period_", combo_name, ".csv"))
+  file.path(outdir, "summary_by_period.csv")
 )
 
 write_csv(
   summary_overall_df,
-  file.path(outdir, paste0("deterministic_summary_overall_", combo_name, ".csv"))
+  file.path(outdir, "summary_overall.csv")
 )
 
 message("DONE. Combo = ", combo_name, " -> ", outdir)

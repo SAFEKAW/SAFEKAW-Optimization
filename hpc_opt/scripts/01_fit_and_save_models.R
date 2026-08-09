@@ -23,6 +23,19 @@ dir.create(here("hpc_opt","models"), recursive = TRUE, showWarnings = FALSE)
 dir.create(here("hpc_opt","outputs","model_checks"), recursive = TRUE, showWarnings = FALSE)
 dir.create(here("hpc_opt","outputs","model_checks","figures"), recursive = TRUE, showWarnings = FALSE)
 
+# Avoid aborting a refit when Excel or OneDrive temporarily locks a diagnostic
+# CSV. Prefer the canonical path and otherwise write a dated sibling.
+write_model_check_csv <- function(x, path) {
+  tryCatch(
+    readr::write_csv(x, path),
+    error = function(e) {
+      fallback <- sub("\\.csv$", "_refresh_20260807.csv", path)
+      warning("Diagnostic CSV locked; writing updated results to: ", fallback)
+      readr::write_csv(x, fallback)
+    }
+  )
+}
+
 # -----------------------------
 # load historical common inputs
 # -----------------------------
@@ -106,7 +119,7 @@ irr_metrics <- tibble(
 )
 
 saveRDS(irr_lm, here("hpc_opt","models","irr_lm.rds"))
-write_csv(irr_metrics, here("hpc_opt","outputs","model_checks","irrigation_metrics.csv"))
+write_model_check_csv(irr_metrics, here("hpc_opt","outputs","model_checks","irrigation_metrics.csv"))
 
 r2_df_irr <- round(irr_metrics$R2, 2)
 
@@ -253,7 +266,7 @@ metrics_all <- bind_rows(
   })
 )
 
-write_csv(
+write_model_check_csv(
   metrics_all,
   here("hpc_opt","outputs","model_checks","yield_model_comparison.csv")
 )
@@ -285,7 +298,7 @@ coef_compare_wide <- coef_compare %>%
     abs_estimate_diff = abs(estimate_diff)
   )
 
-write_csv(
+write_model_check_csv(
   coef_compare_wide,
   here("hpc_opt","outputs","model_checks","yield_model_coefficients_wide.csv")
 )
@@ -330,8 +343,7 @@ for (cr in crops) {
 
     wheat_formula_kg <- yield_kgHa_detrended ~
       ZTotalWater + I(ZTotalWater^2) + I(ZTotalWater^3) +
-      ZGDD + Year_centered +
-      ZTotalWater:ZGDD + ZTotalWater:Year_centered +
+      ZGDD + ZTotalWater:ZGDD +
       (1 | FIPS)
 
     wheat_formula_kcal <- update(
@@ -368,9 +380,9 @@ for (cr in crops) {
   saveRDS(m_kcal, here("hpc_opt","models", paste0("yield_kcal_", cr, ".rds")))
 }
 
-# Wheat year-extrapolation diagnostic. Hold GDD at its historical median and
-# total water at representative historical dry/median/wet conditions, then
-# isolate the fixed-effect response through 2100.
+# Wheat extrapolation diagnostic. Hold GDD at its historical median and total
+# water at representative historical dry/median/wet conditions, then confirm
+# that the climate-only production model has no artificial calendar-year trend.
 wheat_train <- df_crop %>%
   filter(
     Crop == "Wheat",
@@ -407,7 +419,7 @@ wheat_projection_diagnostic$yield_kgHa_pred_fixed <-
     fixed_only = TRUE
   )
 
-write_csv(
+write_model_check_csv(
   wheat_projection_diagnostic,
   here(
     "hpc_opt", "outputs", "model_checks",
@@ -438,7 +450,7 @@ p_wheat_year_extrapolation <- ggplot(
     x = "Year",
     y = "Predicted detrended wheat yield (kg/ha)",
     color = "Total-water condition",
-    title = "Wheat yield extrapolation from centered-year terms",
+    title = "Climate-only wheat yield extrapolation check",
     subtitle = paste0(
       "GDD fixed at historical median; water fixed at historical ",
       "10th, 50th, and 90th percentiles"
@@ -482,7 +494,7 @@ final_yield_metrics <- df_crop_pred %>%
     .groups = "drop"
   )
 
-write_csv(
+write_model_check_csv(
   final_yield_metrics,
   here("hpc_opt", "outputs", "model_checks", "yield_final_model_metrics.csv")
 )
@@ -673,7 +685,7 @@ r2_df_wq <- round(wq_metrics$R2, 2)
 
 
 saveRDS(wq_lm, here("hpc_opt","models","wq_lm.rds"))
-write_csv(wq_metrics, here("hpc_opt","outputs","model_checks","wq_metrics.csv"))
+write_model_check_csv(wq_metrics, here("hpc_opt","outputs","model_checks","wq_metrics.csv"))
 
 
 p_wq_obs_pred <- ggplot(wq_pred, aes(x = NitrateFlux_kg, y = NitrateFluxPredicted_kg)) +

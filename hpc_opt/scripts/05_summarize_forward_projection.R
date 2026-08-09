@@ -6,9 +6,10 @@ suppressPackageStartupMessages({
 })
 
 # Summarize the deterministic "project climate and land use forward" experiment.
-# Management is held at current irrigation and fertilizer settings. The fixed
-# land-use scenario therefore represents climate-only change, while BAU combines
-# climate change with the configured land-use trajectory.
+# Management is held at current irrigation technology, baseline irrigated extent,
+# and current fertilizer settings. The fixed land-use scenario therefore
+# represents climate-only change, while BAU combines climate change with the
+# configured land-use trajectory.
 
 run_root <- here("hpc_opt", "outputs", "factorial_runs")
 hist_objectives_file <- here(
@@ -43,6 +44,8 @@ hist_ref <- tibble(
 
 run_dirs <- list.dirs(run_root, recursive = FALSE, full.names = TRUE)
 period_files <- unlist(lapply(run_dirs, function(run_dir) {
+  current <- file.path(run_dir, "summary_by_period.csv")
+  if (file.exists(current)) return(current)
   list.files(
     run_dir,
     pattern = "^deterministic_summary_by_period_.*[.]csv$",
@@ -61,7 +64,11 @@ future <- bind_rows(lapply(
   read_csv,
   show_col_types = FALSE
 )) %>%
-  filter(irrigation_name == "current", fertilizer_name == "current") %>%
+  filter(
+    irrigation_technology_name == "current",
+    irrigation_extent_name == "baseline",
+    fertilizer_name == "current"
+  ) %>%
   select(
     climate_pathway, period, landuse_name,
     mean_nitrate_kgyr, mean_irrigation_m3yr, mean_profit_usdyr

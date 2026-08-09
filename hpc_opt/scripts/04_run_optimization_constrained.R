@@ -15,6 +15,8 @@ source(here("hpc_opt","R","17_fert_multiplier.R"))
 source(here("hpc_opt","R","18_irrig_allocation.R"))
 source(here("hpc_opt","R","32_precomp_build.R"))
 source(here("hpc_opt","R","33_eval_engine.R"))
+source(here("hpc_opt","R","34_read_config_yaml.R"))
+source(here("hpc_opt","R","36_build_policy_from_configs.R"))
 source(here("hpc_opt","R","41_objective_wrapper_constrained.R"))
 
 # ---- args (HPC friendly) ----
@@ -34,20 +36,63 @@ seed <- as.integer(get_arg("--seed", "1"))
 popsize <- as.integer(get_arg("--popsize", "8"))
 generations <- as.integer(get_arg("--generations", "3"))
 phase <- get_arg("--phase", "crop_bounds")
-fert_factor_min <- as.numeric(get_arg("--fert-factor-min", "0.70"))
-fert_factor_max <- as.numeric(get_arg("--fert-factor-max", "1.00"))
-irr_eff_min <- as.numeric(get_arg("--irr-eff-min", "1.00"))
-irr_eff_max <- as.numeric(get_arg("--irr-eff-max", "1.176470588"))
-irrig_frac_factor_min <- as.numeric(get_arg("--irrig-frac-min", "0.85"))
-irrig_frac_factor_max <- as.numeric(get_arg("--irrig-frac-max", "1.15"))
+irrigation_name <- tolower(get_arg("--irrigation", "current"))
+run_tag <- get_arg("--run-tag", phase)
+baseline_extent_cfg <- read_config_yaml(here(
+  "hpc_opt", "config", "irrigation_extent", "baseline.yaml"
+))
+expanded_extent_cfg <- read_config_yaml(here(
+  "hpc_opt", "config", "irrigation_extent", "expanded.yaml"
+))
+current_fertilizer_cfg <- read_config_yaml(here(
+  "hpc_opt", "config", "fertilizer", "current.yaml"
+))
+efficient_fertilizer_cfg <- read_config_yaml(here(
+  "hpc_opt", "config", "fertilizer", "efficient.yaml"
+))
+fert_factor_min <- as.numeric(get_arg(
+  "--fert-factor-min", as.character(efficient_fertilizer_cfg$fert_factor)
+))
+fert_factor_max <- as.numeric(get_arg(
+  "--fert-factor-max", as.character(current_fertilizer_cfg$fert_factor)
+))
+irrig_frac_factor_min <- as.numeric(get_arg(
+  "--irrig-frac-min", as.character(baseline_extent_cfg$irrig_frac_factor)
+))
+irrig_frac_factor_max <- as.numeric(get_arg(
+  "--irrig-frac-max", as.character(expanded_extent_cfg$irrig_frac_factor)
+))
+
+supported_phases <- c("crop_bounds", "crop_fert", "crop_fert_irrigfrac")
+if (!phase %in% supported_phases) {
+  stop(
+    "Unknown phase: ", phase, ". Supported phases are: ",
+    paste(supported_phases, collapse = ", "), "."
+  )
+}
+if (!irrigation_name %in% c("current", "efficient")) {
+  stop("--irrigation must be either 'current' or 'efficient'.")
+}
+if (!grepl("^[A-Za-z0-9._-]+$", run_tag)) {
+  stop("--run-tag may contain only letters, numbers, dot, underscore, and hyphen.")
+}
+
+irrigation_cfg <- read_config_yaml(here(
+  "hpc_opt", "config", "irrigation_technology", paste0(irrigation_name, ".yaml")
+))
+scenario_irr_eff <- as.numeric(irrigation_cfg$irr_eff)
+if (!is.finite(scenario_irr_eff) || scenario_irr_eff < 1) {
+  stop("Irrigation scenario config must define finite irr_eff >= 1.")
+}
+scenario_water_savings <- 1 - 1 / scenario_irr_eff
+irrigation_extent_name <- if (
+  phase == "crop_fert_irrigfrac"
+) "optimized" else "baseline"
+fertilizer_name <- if (phase == "crop_bounds") "current" else "optimized"
 
 if (!is.finite(fert_factor_min) || !is.finite(fert_factor_max) ||
     fert_factor_min <= 0 || fert_factor_min > fert_factor_max) {
   stop("Invalid fertilizer-factor bounds.")
-}
-if (!is.finite(irr_eff_min) || !is.finite(irr_eff_max) ||
-    irr_eff_min < 1 || irr_eff_min > irr_eff_max) {
-  stop("Invalid irrigation-efficiency bounds; both must be >= 1.")
 }
 if (!is.finite(irrig_frac_factor_min) || !is.finite(irrig_frac_factor_max) ||
     irrig_frac_factor_min < 0 ||
@@ -56,9 +101,15 @@ if (!is.finite(irrig_frac_factor_min) || !is.finite(irrig_frac_factor_max) ||
 }
 annual_crop_change <- as.numeric(get_arg("--annual-crop-change", "0.01"))
 
-scenario_name <- paste(landuse_name, gcm_name, climate_pathway, period, sep = "_")
+scenario_name <- paste(
+  landuse_name, irrigation_name, gcm_name, climate_pathway, period, sep = "_"
+)
 
-message("Running optimization scenario: ", scenario_name, " | phase=", phase)
+message(
+  "Running optimization scenario: ", scenario_name,
+  " | phase=", phase,
+  " | irrigation savings=", round(100 * scenario_water_savings, 1), "%"
+)
 
 # ---- load models ----
 models <- load_models(here("hpc_opt", "models"))
@@ -79,7 +130,7 @@ universal_costs <- list(
 crop_params <- tibble::tribble(
   ~Crop,      ~income_per_kg, ~direct_cost_per_kg, ~fixed_cost_per_kg, ~total_cost_per_kg, ~fert_kgha,
   "Wheat",     0.2,           0.12,                0.05,               0.17,               90,
-  "Corn",      0.18,          0.11,                0.05,               0.15,              250,
+  "Corn",      0.18,          0.11,                0.05,               0.16,              250,
   "Sorghum",   0.17,          0.09,                0.06,               0.15,              110,
   "Soybeans",  0.37,          0.18,                0.14,               0.32,               55
 ) %>%
@@ -96,10 +147,8 @@ precomp_file <- here(
   sprintf("precomp_%s_%s_%s.rds", gcm_name, climate_pathway, period)
 )
 
-scenario_path_file <- here(
-  "hpc_opt", "outputs", "factorial_runs",
-  sprintf("%s_current_current_%s_%s", landuse_name, gcm_name, climate_pathway),
-  sprintf("scenario_path_%s_current_current_%s_%s.csv", landuse_name, gcm_name, climate_pathway)
+scenario_path_file <- resolve_baseline_scenario_path(
+  landuse_name, gcm_name, climate_pathway, require_existing = FALSE
 )
 
 if (!file.exists(df_county_file)) stop("Missing county input file: ", df_county_file)
@@ -244,8 +293,8 @@ lu_baseline <- scenario_path %>%
 # ---- fixed/current management policy for Step 1 ----
 policy <- list(
   cult_area_factor = 1,
-  irrig_frac_factor = 1,
-  irr_eff = 1,
+  irrig_frac_factor = as.numeric(baseline_extent_cfg$irrig_frac_factor),
+  irr_eff = scenario_irr_eff,
   fert_factor = 1,
   fert_gamma = 0.1,
   alluvial_target_irrig_area_cap_m2 = alluvial_target_irrig_area_cap_m2,
@@ -276,7 +325,7 @@ fn <- make_objective_wrapper(
 
 
 # ---- output directory ----
-outdir <- here("hpc_opt", "outputs", "runs", phase, scenario_name)
+outdir <- here("hpc_opt", "outputs", "runs", run_tag, scenario_name)
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 
 set.seed(seed)
@@ -294,19 +343,13 @@ if (phase == "crop_fert") {
   upper <- c(rep(1, 4), fert_factor_max)
 }
 
-if (phase == "crop_fert_irreff") {
+if (phase == "crop_fert_irrigfrac") {
   idim <- 6
-  lower <- c(rep(0, 4), fert_factor_min, irr_eff_min)
-  upper <- c(rep(1, 4), fert_factor_max, irr_eff_max)
-}
-
-if (phase == "crop_fert_irreff_irrigfrac") {
-  idim <- 7
   lower <- c(
-    rep(0, 4), fert_factor_min, irr_eff_min, irrig_frac_factor_min
+    rep(0, 4), fert_factor_min, irrig_frac_factor_min
   )
   upper <- c(
-    rep(1, 4), fert_factor_max, irr_eff_max, irrig_frac_factor_max
+    rep(1, 4), fert_factor_max, irrig_frac_factor_max
   )
 }
 
@@ -336,11 +379,18 @@ params <- as.data.frame(t(apply(
   )
 
 if (idim >= 5) params$fert_factor <- res$par[, 5]
-if (idim >= 6) params$irr_eff <- res$par[, 6]
-if (idim >= 7) params$irrig_frac_factor <- res$par[, 7]
+if (phase == "crop_fert_irrigfrac") {
+  params$irrig_frac_factor <- res$par[, 6]
+}
+if (!"irrig_frac_factor" %in% names(params)) params$irrig_frac_factor <- 1
+params$irrigation_name <- irrigation_name
+params$irrigation_technology_name <- irrigation_name
+params$irrigation_extent_name <- irrigation_extent_name
+params$fertilizer_name <- fertilizer_name
+params$irr_eff <- scenario_irr_eff
+params$irrigation_water_savings_fraction <- scenario_water_savings
 
 if (idim >= 5) params$fertilizer_reduction_fraction <- 1 - params$fert_factor
-if (idim >= 6) params$irrigation_water_savings_fraction <- 1 - 1 / params$irr_eff
 
 if (idim >= 5) {
   params$nutrient_management_cost_usdyr <-
@@ -352,8 +402,6 @@ if (idim >= 5) {
         universal_costs$nutrient_mgmt_max_reduction
     )
 }
-
-if (!"irrig_frac_factor" %in% names(params)) params$irrig_frac_factor <- 1
 
 mean_cultivated_area_m2 <- mean(lu_baseline$LC_cult_base, na.rm = TRUE)
 irrigation_area_out <- bind_rows(lapply(seq_len(nrow(params)), function(i) {
@@ -430,11 +478,24 @@ pareto_out <- bind_cols(
       irrigation_extent_feasible &
       alluvial_area_feasible,
     phase = phase,
+    run_tag = run_tag,
+    popsize = popsize,
+    generations = generations,
     scenario_name = scenario_name,
     gcm_name = gcm_name,
     climate_pathway = climate_pathway,
     period = period,
     landuse_name = landuse_name,
+    irrigation_name = irrigation_name,
+    irrigation_technology_name = irrigation_name,
+    irrigation_extent_name = irrigation_extent_name,
+    fertilizer_name = fertilizer_name,
+    irr_eff = scenario_irr_eff,
+    irrigation_water_savings_fraction = scenario_water_savings,
+    irrig_frac_factor_scenario_baseline =
+      as.numeric(baseline_extent_cfg$irrig_frac_factor),
+    irrig_frac_factor_scenario_expanded =
+      as.numeric(expanded_extent_cfg$irrig_frac_factor),
     seed = seed,
 
     crop_bound_type = "dynamic_relative_transition",
@@ -452,7 +513,10 @@ saveRDS(
 
 
 required_cols <- c(
-  "scenario_name", "gcm_name", "climate_pathway", "period", "landuse_name", "seed",
+  "scenario_name", "gcm_name", "climate_pathway", "period", "landuse_name",
+  "irrigation_name", "irrigation_technology_name", "irrigation_extent_name",
+  "fertilizer_name", "irr_eff", "irrigation_water_savings_fraction", "seed",
+  "phase", "run_tag", "popsize", "generations",
   "Corn", "Soybeans", "Sorghum", "Wheat",
   "nitrate", "irrigation", "profit", "profit_minimized",
   "feasible"

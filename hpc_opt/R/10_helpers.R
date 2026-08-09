@@ -420,3 +420,34 @@ get_baseline_obs_x <- function(int_crop_areanorm_path,
     wheat = 1 - sum(obs_x)
   )
 }
+
+# --- Shared deterministic baseline path used by both optimization workflows ---
+resolve_baseline_scenario_path <- function(
+    landuse_name, gcm_name, climate_pathway, require_existing = TRUE
+) {
+  combo_names <- c(
+    paste(
+      landuse_name, "current", "baseline", "current",
+      gcm_name, climate_pathway, sep = "_"
+    ),
+    # Compatibility with deterministic outputs created before irrigation
+    # technology and extent became independent scenario axes.
+    paste(landuse_name, "current", "current", gcm_name, climate_pathway, sep = "_")
+  )
+  run_dirs <- file.path(
+    here::here("hpc_opt", "outputs", "factorial_runs"), combo_names
+  )
+  candidates <- c(
+    file.path(run_dirs, "scenario_path.csv"),
+    file.path(run_dirs, paste0("scenario_path_", combo_names, ".csv"))
+  )
+  existing <- candidates[file.exists(candidates)]
+  if (length(existing)) return(existing[[1]])
+  if (isTRUE(require_existing)) {
+    stop(
+      "Missing deterministic baseline scenario path. Checked: ",
+      paste(candidates, collapse = ", ")
+    )
+  }
+  candidates[[1]]
+}

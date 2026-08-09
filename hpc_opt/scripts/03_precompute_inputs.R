@@ -64,6 +64,12 @@ if (!is_future) {
   out_precomp <- here("hpc_opt", "outputs", "precompute", paste0("precomp_", gcm_name, "_", scenario_tag, ".rds"))
 }
 
+# Optional explicit path supports verified atomic replacement when OneDrive or
+# another sync client temporarily locks the canonical RDS file.
+if (exists("out_precomp_override") && nzchar(out_precomp_override)) {
+  out_precomp <- out_precomp_override
+}
+
 out_baseline_reference <- here("hpc_opt", "outputs", "precompute", "baseline_reference.rds")
 
 dir.create(here("hpc_opt","outputs","precompute"), recursive = TRUE, showWarnings = FALSE)
@@ -78,6 +84,52 @@ if (length(missing_files) > 0) {
 # ---- load scenario-specific common inputs ----
 common_input_basin <- read_csv(in_basin, show_col_types = FALSE)
 df_county <- read_csv(in_county, show_col_types = FALSE)
+
+# Precipitation percentile is defined relative to the historical 2006-2023
+# distribution used to fit the water-quality model. Future percentile changes
+# are calculated on the continuous 2025-2099 pathway before period subsetting.
+historical_basin_file <- here(
+  "hpc_opt", "outputs", "common_inputs_basin_hist_baseline.csv"
+)
+historical_precip <- read_csv(
+  historical_basin_file, show_col_types = FALSE
+) %>%
+  filter(Year %in% 2006:2023) %>%
+  arrange(Year) %>%
+  pull(Climate_precip_m)
+
+if (length(historical_precip) != 18L || any(!is.finite(historical_precip))) {
+  stop("Historical precipitation reference must contain 18 finite annual values.")
+}
+
+if (!is_future) {
+  precip_context <- common_input_basin
+} else {
+  pathway <- sub("_(early|mid|late)$", "", scenario_tag)
+  period_tags <- paste0(pathway, c("_early", "_mid", "_late"))
+  period_files <- here(
+    "hpc_opt", "outputs",
+    paste0("common_inputs_basin_", gcm_name, "_", period_tags, ".csv")
+  )
+  missing_period_files <- period_files[!file.exists(period_files)]
+  if (length(missing_period_files) > 0) {
+    stop(
+      "Continuous future percentile construction requires all three periods:\n",
+      paste(" -", missing_period_files, collapse = "\n")
+    )
+  }
+  precip_context <- bind_rows(lapply(
+    period_files,
+    read_csv,
+    show_col_types = FALSE
+  )) %>%
+    arrange(Year)
+  future_years_found <- sort(unique(as.integer(precip_context$Year)))
+  if (length(future_years_found) != 75L ||
+      !setequal(future_years_found, 2025:2099)) {
+    stop("Future precipitation context must cover every year from 2025 to 2099.")
+  }
+}
 
 # For irrigation references, always use historical water-use years
 irrig_ref_years <- 2006:2023
@@ -124,6 +176,8 @@ print(hist_mix)
 precomp <- build_precomp(
   common_input_basin = common_input_basin,
   years_vec = years_vec,
+  precip_reference_m = historical_precip,
+  precip_context = precip_context,
   fert_ref_by_year = NULL,               # uses Management_FertilizerUse_kg from basin if present
   baseline_irrig_frac = baseline_irrig_frac,
   hist_mix = hist_mix,

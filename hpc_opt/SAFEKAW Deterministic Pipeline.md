@@ -204,13 +204,19 @@ Primary outputs:
 
 `hpc_opt/scripts/04_run_factorial_all.R` loops over the enabled configuration files and calls `04_run_deterministic_factorial.R` for each combination.
 
-The current loop evaluates:
+The deterministic factorial evaluates 32 complete 2025-2099 trajectories:
 
 - climate source: ensemble
 - pathways: RCP 4.5 and RCP 8.5
 - land use: fixed and BAU
-- irrigation: current and efficient
+- irrigation technology: current and efficient (15% withdrawal savings)
+- irrigated extent: historical baseline and 15% expanded
 - fertilizer: current and efficient
+
+Irrigation technology and irrigated extent are independent configuration axes
+under `hpc_opt/config/irrigation_technology/` and
+`hpc_opt/config/irrigation_extent/`. This ensures that all four irrigation
+combinations are evaluated, including efficient technology on expanded acreage.
 
 Run from an R session at the repository root:
 
@@ -218,13 +224,17 @@ Run from an R session at the repository root:
 source(here::here("hpc_opt", "scripts", "04_run_factorial_all.R"))
 ```
 
+The runner first writes the auditable scenario manifest
+`hpc_opt/outputs/deterministic_factorial_grid_32_scenarios.csv` and then
+evaluates every row.
+
 Each scenario directory under `hpc_opt/outputs/factorial_runs/` contains:
 
-- `scenario_path_<scenario>.csv`
-- `deterministic_results_<scenario>.csv`
-- `irrigation_area_by_domain_crop_<scenario>.csv`
-- `deterministic_summary_by_period_<scenario>.csv`
-- `deterministic_summary_overall_<scenario>.csv`
+- `scenario_path.csv`
+- `deterministic_results.csv`
+- `irrigation_by_crop.csv`
+- `summary_by_period.csv`
+- `summary_overall.csv`
 
 Annual and summary outputs report the three objectives (nitrate export, irrigation withdrawals, and net returns) plus modeled-crop irrigated area and irrigated fractions for the whole basin and estimated alluvial corridor. Alluvial values use historical crop-specific corridor capture rates.
 
@@ -236,6 +246,8 @@ Annual and summary outputs report the three objectives (nitrate export, irrigati
 
 Additional targeted checks include:
 
+- `hpc_opt/scripts/05_check_deterministic_counterfactuals.R`, which verifies
+  matched current/efficient technology and fertilizer relationships;
 - `hpc_opt/scripts/05_check_irrigation_denominators.R`
 - `hpc_opt/scripts/06_compare_irrigation_domains.R`
 

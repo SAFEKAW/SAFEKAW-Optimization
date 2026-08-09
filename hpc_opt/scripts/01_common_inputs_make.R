@@ -49,6 +49,8 @@ is_future <- scenario_tag != "hist_baseline"
 in_landcover <- here::here("data", "LandCoverData-CDL_County.csv")
 in_irrig     <- here::here("data", "WaterUseData_County.csv")
 in_irrig_alluvial <- here::here("data", "WaterUseByCrop_AlluvialCorridor.csv")
+in_county_boundaries <- here::here("data", "Boundary_EKSRBcounties.gpkg")
+in_watershed_boundary <- here::here("data", "Boundary_EKSRBwatershed.gpkg")
 
   if (!is_future) {
     # This is the full-run output from 00_make_climate_inputs_gridmet.R.
@@ -70,7 +72,15 @@ in_irrig_alluvial <- here::here("data", "WaterUseByCrop_AlluvialCorridor.csv")
 
 dir.create(dirname(out_county), recursive = TRUE, showWarnings = FALSE)
 
-needed_files <- c(in_climate, in_landcover, in_irrig, in_irrig_alluvial, in_crop_climate)
+needed_files <- c(
+  in_climate,
+  in_landcover,
+  in_irrig,
+  in_irrig_alluvial,
+  in_crop_climate,
+  in_county_boundaries,
+  in_watershed_boundary
+)
 missing_files <- needed_files[!file.exists(needed_files)]
 
 if (length(missing_files) > 0) {
@@ -241,12 +251,79 @@ df_combined_county <- df_landcover_all_class %>%
   left_join(df_crop_climate, by = c("Year","FIPS","Crop")) %>%
   left_join(df_climate_county,by = c("Year","FIPS"))
 
-# ---- 7) Basin aggregation (TEMPORARY area weights) ----
-# NOTE: This replicates current approach: county area is derived from landcover totals.
-#       Later swap this with true "county-in-watershed" clipped areas.
-df_county_areas <- df_landcover_county %>%
-  group_by(FIPS) %>%
-  summarise(area_m2 = sum(area_m2, na.rm = TRUE), .groups = "drop")
+# ---- 7) Basin aggregation (county area within the EKSRB) ----
+# County climate was extracted over county-watershed intersections. Use those
+# same intersection areas as aggregation weights rather than full-county CDL
+# areas, which would over-weight large counties with limited basin overlap.
+df_county_areas <- sf::read_sf(in_county_boundaries, quiet = TRUE) %>%
+  sf::st_drop_geometry() %>%
+  transmute(
+    FIPS = as.character(FIPS),
+    area_m2 = as.numeric(watershedOverlap_ha) * 10000
+  )
+
+watershed_area_m2 <- sf::read_sf(in_watershed_boundary, quiet = TRUE) %>%
+  sf::st_area() %>%
+  as.numeric() %>%
+  sum()
+
+boundary_fips <- sort(unique(df_county_areas$FIPS))
+climate_fips <- sort(unique(df_climate_county$FIPS))
+landcover_fips <- sort(unique(df_landcover_county$FIPS))
+
+if (nrow(df_county_areas) != 17L || length(boundary_fips) != 17L) {
+  stop(
+    "Expected exactly 17 unique EKSRB county-overlap weights; found ",
+    nrow(df_county_areas), " rows and ", length(boundary_fips), " unique FIPS."
+  )
+}
+
+if (!setequal(boundary_fips, climate_fips)) {
+  stop(
+    "County FIPS mismatch between EKSRB boundary weights and climate inputs. ",
+    "Only in boundaries: ", paste(setdiff(boundary_fips, climate_fips), collapse = ", "),
+    "; only in climate: ", paste(setdiff(climate_fips, boundary_fips), collapse = ", ")
+  )
+}
+
+if (!setequal(boundary_fips, landcover_fips)) {
+  stop(
+    "County FIPS mismatch between EKSRB boundary weights and land-cover inputs. ",
+    "Only in boundaries: ", paste(setdiff(boundary_fips, landcover_fips), collapse = ", "),
+    "; only in land cover: ", paste(setdiff(landcover_fips, boundary_fips), collapse = ", ")
+  )
+}
+
+if (any(!is.finite(df_county_areas$area_m2)) || any(df_county_areas$area_m2 <= 0)) {
+  stop("All county-within-EKSRB aggregation weights must be finite and positive.")
+}
+
+climate_count_check <- df_climate_county %>%
+  count(Year, name = "n_counties") %>%
+  filter(n_counties != 17L)
+
+if (nrow(climate_count_check) > 0L) {
+  stop(
+    "Each climate year must contain exactly 17 counties. Invalid years: ",
+    paste(climate_count_check$Year, collapse = ", ")
+  )
+}
+
+weight_sum_m2 <- sum(df_county_areas$area_m2)
+area_tolerance_m2 <- max(5e4, watershed_area_m2 * 1e-5) # 5 ha or 0.001%
+if (abs(weight_sum_m2 - watershed_area_m2) > area_tolerance_m2) {
+  stop(
+    "County-overlap weights do not close to the EKSRB watershed area: weights = ",
+    signif(weight_sum_m2, 10), " m2; watershed = ", signif(watershed_area_m2, 10),
+    " m2; tolerance = ", signif(area_tolerance_m2, 6), " m2."
+  )
+}
+
+message(
+  "Validated 17 county-overlap weights: sum = ",
+  round(weight_sum_m2 / 1e6, 3), " km2; watershed = ",
+  round(watershed_area_m2 / 1e6, 3), " km2."
+)
 
 df_climate_basin <- df_climate_county %>%
   left_join(df_county_areas, by = "FIPS") %>%
@@ -313,12 +390,14 @@ missing <- setdiff(required_cols, names(common_input_basin))
 if (length(missing) > 0) stop("Missing required cols in basin table: ", paste(missing, collapse = ", "))
 
 # ---- 8) Write outputs ----
-expected_years <- sort(unique(yrs_common))
+expected_years <- sort(unique(as.integer(yrs_common)))
+county_output_years <- sort(unique(as.integer(df_combined_county$Year)))
+basin_output_years <- sort(unique(as.integer(common_input_basin$Year)))
 stopifnot(
   nrow(df_combined_county) > 0,
   nrow(common_input_basin) > 0,
-  identical(sort(unique(df_combined_county$Year)), expected_years),
-  identical(sort(unique(common_input_basin$Year)), expected_years),
+  identical(county_output_years, expected_years),
+  identical(basin_output_years, expected_years),
   !anyNA(df_combined_county$FIPS),
   !anyNA(df_combined_county$LandCover)
 )

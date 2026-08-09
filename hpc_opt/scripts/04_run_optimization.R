@@ -15,6 +15,8 @@ source(here("hpc_opt","R","17_fert_multiplier.R"))
 source(here("hpc_opt","R","18_irrig_allocation.R"))
 source(here("hpc_opt","R","32_precomp_build.R"))
 source(here("hpc_opt","R","33_eval_engine.R"))
+source(here("hpc_opt","R","34_read_config_yaml.R"))
+source(here("hpc_opt","R","36_build_policy_from_configs.R"))
 source(here("hpc_opt","R","41_objective_wrapper.R"))
 
 # ---- args (HPC friendly) ----
@@ -33,6 +35,17 @@ landuse_name <- get_arg("--landuse", "fixed")
 seed <- as.integer(get_arg("--seed", "1"))
 popsize <- as.integer(get_arg("--popsize", "8"))
 generations <- as.integer(get_arg("--generations", "3"))
+run_tag <- get_arg("--run-tag", "")
+
+if (!is.finite(popsize) || popsize < 4 || popsize %% 4 != 0) {
+  stop("--popsize must be a positive multiple of 4 (minimum 4).")
+}
+if (!is.finite(generations) || generations < 1) {
+  stop("--generations must be a positive integer.")
+}
+if (nzchar(run_tag) && !grepl("^[A-Za-z0-9._-]+$", run_tag)) {
+  stop("--run-tag may contain only letters, numbers, dot, underscore, and hyphen.")
+}
 
 scenario_name <- paste(landuse_name, gcm_name, climate_pathway, period, sep = "_")
 
@@ -57,7 +70,7 @@ universal_costs <- list(
 crop_params <- tibble::tribble(
   ~Crop,      ~income_per_kg, ~direct_cost_per_kg, ~fixed_cost_per_kg, ~total_cost_per_kg, ~fert_kgha,
   "Wheat",     0.2,           0.12,                0.05,               0.17,               90,
-  "Corn",      0.18,          0.11,                0.05,               0.15,              250,
+  "Corn",      0.18,          0.11,                0.05,               0.16,              250,
   "Sorghum",   0.17,          0.09,                0.06,               0.15,              110,
   "Soybeans",  0.37,          0.18,                0.14,               0.32,               55
 ) %>%
@@ -74,10 +87,8 @@ precomp_file <- here(
   sprintf("precomp_%s_%s_%s.rds", gcm_name, climate_pathway, period)
 )
 
-scenario_path_file <- here(
-  "hpc_opt", "outputs", "factorial_runs",
-  sprintf("%s_current_current_%s_%s", landuse_name, gcm_name, climate_pathway),
-  sprintf("scenario_path_%s_current_current_%s_%s.csv", landuse_name, gcm_name, climate_pathway)
+scenario_path_file <- resolve_baseline_scenario_path(
+  landuse_name, gcm_name, climate_pathway, require_existing = FALSE
 )
 
 if (!file.exists(df_county_file)) stop("Missing county input file: ", df_county_file)
@@ -131,14 +142,23 @@ lu_baseline <- scenario_path %>%
     LC_total = LC_cult_base + LC_grass_base + LC_dev_base
   )
 
-# ---- fixed/current management policy for Step 1 ----
-policy <- list(
-  cult_area_factor = 1,
-  irrig_frac_factor = 1,
-  irr_eff = 1,
-  fert_factor = 1,
-  fert_gamma = 0.1,
-  debug_crop_alloc = FALSE
+# ---- shared baseline management definitions for theoretical benchmark ----
+irrigation_technology_cfg <- read_config_yaml(here(
+  "hpc_opt", "config", "irrigation_technology", "current.yaml"
+))
+irrigation_extent_cfg <- read_config_yaml(here(
+  "hpc_opt", "config", "irrigation_extent", "baseline.yaml"
+))
+fertilizer_cfg <- read_config_yaml(here(
+  "hpc_opt", "config", "fertilizer", "current.yaml"
+))
+policy <- c(
+  list(cult_area_factor = 1, debug_crop_alloc = FALSE),
+  build_policy_from_configs(
+    irrigation_technology_cfg = irrigation_technology_cfg,
+    irrigation_extent_cfg = irrigation_extent_cfg,
+    fertilizer_cfg = fertilizer_cfg
+  )
 )
 
 
@@ -163,7 +183,11 @@ fn <- make_objective_wrapper(
 
 
 # ---- output directory ----
-outdir <- here("hpc_opt", "outputs", "runs", scenario_name)
+outdir <- if (nzchar(run_tag)) {
+  here("hpc_opt", "outputs", "runs", run_tag, scenario_name)
+} else {
+  here("hpc_opt", "outputs", "runs", scenario_name)
+}
 dir.create(outdir, recursive = TRUE, showWarnings = FALSE)
 
 set.seed(seed)
@@ -240,7 +264,18 @@ pareto_out <- bind_cols(
     climate_pathway = climate_pathway,
     period = period,
     landuse_name = landuse_name,
-    seed = seed
+    irrigation_technology_name = irrigation_technology_cfg$name,
+    irrigation_extent_name = irrigation_extent_cfg$name,
+    fertilizer_name = fertilizer_cfg$name,
+    irr_eff = as.numeric(irrigation_technology_cfg$irr_eff),
+    irrigation_water_savings_fraction =
+      1 - 1 / as.numeric(irrigation_technology_cfg$irr_eff),
+    irrig_frac_factor = as.numeric(irrigation_extent_cfg$irrig_frac_factor),
+    fert_factor = as.numeric(fertilizer_cfg$fert_factor),
+    seed = seed,
+    popsize = popsize,
+    generations = generations,
+    run_tag = run_tag
   )
 
 saveRDS(
@@ -250,7 +285,9 @@ saveRDS(
 
 
 required_cols <- c(
-  "scenario_name", "gcm_name", "climate_pathway", "period", "landuse_name", "seed",
+  "scenario_name", "gcm_name", "climate_pathway", "period", "landuse_name",
+  "irrigation_technology_name", "irrigation_extent_name", "fertilizer_name", "seed",
+  "irr_eff", "irrigation_water_savings_fraction", "irrig_frac_factor", "fert_factor",
   "Corn", "Soybeans", "Sorghum", "Wheat",
   "nitrate", "irrigation", "profit", "profit_minimized",
   "feasible"

@@ -12,6 +12,8 @@ suppressPackageStartupMessages({
   library(scales)
 })
 
+source(here("hpc_opt", "R", "10_helpers.R"))
+
 # ---- optional packages (nice-to-have) ----
 has_ggtern <- requireNamespace("ggtern", quietly = TRUE)
 has_ggrepel <- requireNamespace("ggrepel", quietly = TRUE)
@@ -189,6 +191,11 @@ scenario_labels <- c(
 )
 
 add_scenario_context <- function(df) {
+  if (!"irrigation_name" %in% names(df)) {
+    df$irrigation_name <- stringr::str_extract(
+      as.character(df$Scenario), "(?<=_)(current|efficient)(?=_)"
+    )
+  }
   df %>%
     mutate(
       Scenario_raw = as.character(Scenario),
@@ -196,6 +203,9 @@ add_scenario_context <- function(df) {
       landuse_name = stringr::str_extract(Scenario_raw, "^(fixed|bau)"),
       climate_pathway = stringr::str_extract(Scenario_raw, "rcp45|rcp85"),
       period = stringr::str_extract(Scenario_raw, "early|mid|late"),
+      irrigation_name = dplyr::coalesce(
+        as.character(irrigation_name), "not specified"
+      ),
       
       Scenario_label = dplyr::recode(
         Scenario_raw,
@@ -218,10 +228,7 @@ add_scenario_context <- function(df) {
         levels = c("early", "mid", "late"),
         labels = c("Early century", "Mid century", "Late century")
       ),
-      Scenario_label = factor(
-        Scenario_label,
-        levels = scenario_labels
-      )
+      Scenario_label = factor(Scenario_label)
     )
 }
 
@@ -509,10 +516,8 @@ read_scenario_landcover <- function(Scenario_raw) {
   climate_pathway <- parts[3]
   period_name <- parts[4]
   
-  scenario_path_file <- here(
-    "hpc_opt", "outputs", "factorial_runs",
-    sprintf("%s_current_current_%s_%s", landuse_name, gcm_name, climate_pathway),
-    sprintf("scenario_path_%s_current_current_%s_%s.csv", landuse_name, gcm_name, climate_pathway)
+  scenario_path_file <- resolve_baseline_scenario_path(
+    landuse_name, gcm_name, climate_pathway, require_existing = FALSE
   )
   
   if (!file.exists(scenario_path_file)) {
@@ -732,7 +737,7 @@ if (nrow(fert_check) > 0) {
 }
 
 if (!"irrig_frac_factor_min" %in% names(solutions)) {
-  solutions$irrig_frac_factor_min <- 0.85
+  solutions$irrig_frac_factor_min <- 1.00
 }
 if (!"irrig_frac_factor_max" %in% names(solutions)) {
   solutions$irrig_frac_factor_max <- 1.15
@@ -740,7 +745,7 @@ if (!"irrig_frac_factor_max" %in% names(solutions)) {
 
 irrig_check <- solutions %>%
   filter(
-    phase == "crop_fert_irreff_irrigfrac",
+    phase == "crop_fert_irrigfrac",
     is.finite(irrig_frac_factor),
     is.finite(irrigation_water_savings_fraction),
     is.finite(alluvial_target_irrig_area_cap_fraction),
@@ -780,7 +785,11 @@ if (nrow(irrig_check) > 0) {
     scale_x_continuous(labels = scales::label_percent(accuracy = 1)) +
     labs(
       title = "Irrigation-extent decisions remain inside the adoption bounds",
-      subtitle = "Shaded region is the allowed 0.85-1.15 baseline multiplier",
+      subtitle = paste0(
+        "Shaded region is the allowed ",
+        scales::number(bound_min, accuracy = 0.01), "-",
+        scales::number(bound_max, accuracy = 0.01), " baseline multiplier"
+      ),
       x = "Irrigated extent relative to baseline",
       y = "Annual irrigation withdrawal (million m3)",
       color = "Efficiency\nsavings"
@@ -822,15 +831,15 @@ if (nrow(irrig_check) > 0) {
 
 
 # ------------------------------------------
-# 9) Final-phase 12-scenario smoke-test comparison
+# 9) Final-phase paired-irrigation smoke-test comparison
 # ------------------------------------------
-# Seed 101 is the local 12-context plumbing test (popsize 8, generations 3).
+# Seed 101 is the local scenario plumbing test (popsize 8, generations 3).
 # These figures compare behavior and constraint mechanics; they are not
 # convergence or production-frontier diagnostics.
 
 smoke12 <- solutions %>%
   filter(
-    phase == "crop_fert_irreff_irrigfrac",
+    phase == "crop_fert_irrigfrac",
     seed == 101
   )
 
@@ -848,7 +857,7 @@ if (nrow(smoke12) > 0) {
   smoke_summary <- smoke12 %>%
     group_by(
       Scenario_raw, landuse_name, climate_pathway, period,
-      crop_reference_period
+      irrigation_name, crop_reference_period
     ) %>%
     summarise(
       n_solutions = n(),

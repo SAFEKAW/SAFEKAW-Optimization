@@ -1,4 +1,4 @@
 objective,historical_mean,units,preferred_direction,historical_start_year,historical_end_year
-nitrate,7391256,kg N/yr,lower,2006,2023
-irrigation,18215875,m3/yr,lower,2006,2023
-net_returns,149008372,USD/yr,higher,2006,2023
+nitrate,7389419.807815427,kg N/yr,lower,2006,2023
+irrigation,18215875.439893533,m3/yr,lower,2006,2023
+net_returns,55896242.54134953,USD/yr,higher,2006,2023

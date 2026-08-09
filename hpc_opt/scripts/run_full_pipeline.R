@@ -93,6 +93,7 @@ if (run_factorial) {
 # 6. summary / checks
 # -----------------------------
 if (run_check) {
+  run_stage("05_check_deterministic_counterfactuals.R")
   run_stage("05_check_deterministic_factorial.R")
 }
 

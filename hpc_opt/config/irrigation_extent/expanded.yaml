@@ -1,0 +1,5 @@
+name: expanded
+irrig_frac_factor: 1.15
+irrig_area_cap_m2: 583344900
+cap_rule: aquifer_and_cornsoy
+description: Irrigated area expanded by 15 percent relative to baseline

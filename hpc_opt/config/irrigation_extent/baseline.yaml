@@ -1,0 +1,4 @@
+name: baseline
+irrig_frac_factor: 1.0
+irrig_area_cap_m2: .inf
+description: Historical baseline irrigated fraction
