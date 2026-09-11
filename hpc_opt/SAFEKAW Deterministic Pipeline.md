@@ -1,6 +1,40 @@
 # SAFEKAW Deterministic Pipeline
 
-This document describes the deterministic SAFEKAW workflow, from climate preprocessing and common-input construction through model fitting, historical integration, future scenario runs, and checks.
+This document describes two supported routes through the deterministic SAFEKAW workflow: running the deterministic scenarios from derived inputs packaged in the repository, and regenerating the full set of derived inputs from raw climate data.
+
+## Choose a workflow
+
+### Run deterministic scenarios from packaged derived inputs
+
+This is the recommended route for collaborators who want to reproduce the 32 deterministic scenarios. A fresh clone contains the required ensemble county inputs, historical references, fitted models, and precompute bundles. No climate archive or climate extraction is required.
+
+From an R session at the repository root, run:
+
+```r
+source(here::here("hpc_opt", "scripts", "run_deterministic_packaged.R"))
+```
+
+The runner performs a preflight check, runs all 32 factorial scenarios, and then runs the paired-counterfactual and factorial summary checks. It does not rebuild upstream inputs or models.
+
+To check the packaged inputs and R dependencies without running the scenarios, set `SAFEKAW_PREFLIGHT_ONLY=true` before sourcing the runner.
+
+The packaged future inputs are:
+
+- `hpc_opt/outputs/common_inputs_county_ensemble_<scenario>.csv`
+- `hpc_opt/outputs/precompute/precomp_ensemble_<scenario>.rds`
+
+for the six RCP/period combinations. The precompute objects are the packaged derived climate inputs used directly by the deterministic evaluator; they are generated artifacts, not raw climate observations.
+
+### Regenerate everything from raw climate data
+
+Use this route only when changing climate sources, climate-processing logic, common-input construction, model fitting, or historical integration. It is a computational preprocessing workflow and requires access to the raw GridMET/MACA data or permission to download them.
+
+1. Generate the historical climate products with `00_make_climate_inputs_gridmet.R`.
+2. Generate all 30 GCM × scenario MACA products with `00_run_maca_climate_array_worker.R` or the corresponding HPC array jobs.
+3. Generate the six ensemble climate products with `00_make_climate_ensemble.R`.
+4. Run `run_full_pipeline.R` to rebuild common inputs, models, historical integration, precompute objects, deterministic scenarios, and checks.
+
+The large `SAFEKAW data.zip` archive is a raw/emergency backup and is not required for the packaged deterministic route. Do not extract it over a working repository.
 
 ## Workflow at a glance
 
@@ -12,42 +46,7 @@ This document describes the deterministic SAFEKAW workflow, from climate preproc
 6. Run the deterministic factorial scenarios.
 7. Summarize and quality-check the scenario outputs.
 
-Climate extraction is an expensive preprocessing step and is not run by `hpc_opt/scripts/run_full_pipeline.R`. Common-input construction is part of the pipeline runner.
-
-## Packaged climate inputs
-
-Collaborators who do not need to regenerate the raw GridMET and MACA climate products can use the [SAFEKAW Climate Inputs — 2026-08-03 release](https://github.com/SAFEKAW/SAFEKAW-Optimization/releases/tag/climate-inputs-2026-08-03).
-
-Download:
-
-- [safekaw-climate-inputs-20260803.zip](https://github.com/SAFEKAW/SAFEKAW-Optimization/releases/download/climate-inputs-2026-08-03/safekaw-climate-inputs-20260803.zip)
-- [SHA-256 checksum file](https://github.com/SAFEKAW/SAFEKAW-Optimization/releases/download/climate-inputs-2026-08-03/safekaw-climate-inputs-20260803.sha256)
-
-Extract the archive at the repository root. It preserves the `data/` directory and installs the two historical climate inputs plus the twelve future ensemble inputs required by `run_full_pipeline.R`.
-
-PowerShell:
-
-```powershell
-Expand-Archive -LiteralPath safekaw-climate-inputs-20260803.zip -DestinationPath . -Force
-```
-
-macOS/Linux:
-
-```bash
-unzip -o safekaw-climate-inputs-20260803.zip
-```
-
-The published SHA-256 checksum should be:
-
-```text
-5732E67F9F009615A16029C8E1464F386EE059E880A44873425125938F4597BE
-```
-
-After extraction, run the complete deterministic workflow from the repository root:
-
-```r
-source(here::here("hpc_opt", "scripts", "run_full_pipeline.R"))
-```
+Climate extraction is an expensive preprocessing step and is not run by `hpc_opt/scripts/run_full_pipeline.R`. Common-input construction is part of that full rebuild runner.
 
 ## Historical baseline common inputs
 
@@ -251,8 +250,8 @@ Additional targeted checks include:
 - `hpc_opt/scripts/05_check_irrigation_denominators.R`
 - `hpc_opt/scripts/06_compare_irrigation_domains.R`
 
-## Pipeline runner and current limitation
+## Full rebuild runner
 
-`hpc_opt/scripts/run_full_pipeline.R` builds the historical and future ensemble common inputs, fits models, integrates the historical baseline, builds precompute objects, runs the deterministic factorial scenarios, and performs the checks. It assumes the historical GridMET and future ensemble climate files already exist.
+`hpc_opt/scripts/run_full_pipeline.R` builds the historical and future ensemble common inputs, fits models, integrates the historical baseline, builds precompute objects, runs the deterministic factorial scenarios, and performs the checks. It is a rebuild runner, not the collaborator entry point. It assumes the historical GridMET and future ensemble climate files have already been generated from the raw data.
 
-The runner and `04_run_factorial_all.R` both use the ensemble climate source. Set the stage flags near the top of `run_full_pipeline.R` to skip outputs that do not need to be regenerated.
+The full rebuild runner and `04_run_factorial_all.R` both use the ensemble climate source. Set the stage flags near the top of `run_full_pipeline.R` to skip outputs that do not need to be regenerated. For a clone containing the packaged derived inputs, use `run_deterministic_packaged.R` instead.

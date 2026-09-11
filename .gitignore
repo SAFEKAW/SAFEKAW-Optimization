@@ -334,7 +334,6 @@ hpc_opt/outputs/common_inputs_county_ccsm4_rcp45_mid.csv
 hpc_opt/outputs/common_inputs_county_ccsm4_rcp45_late.csv
 hpc_opt/outputs/common_inputs_county_ccsm4_rcp45_early.csv
 hpc_opt/outputs/common_inputs_county.csv
-hpc_opt/outputs/common_inputs_basin_hist_baseline.csv
 hpc_opt/outputs/common_inputs_basin_ensemble_rcp85_mid.csv
 hpc_opt/outputs/common_inputs_basin_ensemble_rcp85_late.csv
 hpc_opt/outputs/common_inputs_basin_ensemble_rcp85_early.csv
