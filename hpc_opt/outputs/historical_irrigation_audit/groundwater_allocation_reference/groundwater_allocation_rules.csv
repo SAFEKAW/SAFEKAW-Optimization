@@ -1,0 +1,8 @@
+rule_order,rule,definition
+1,reference_period,Use the 2006-2023 mean; retain 2019-2023 as a sensitivity reference.
+2,contraction,"Below baseline, scale every observed county-crop-domain groundwater area proportionally."
+3,historical_baseline,"At baseline, reproduce observed mean county-crop-domain groundwater areas."
+4,expansion_domain,"Above baseline, retain the baseline footprint and place added groundwater irrigation only in the alluvial corridor."
+5,expansion_county_weight,"Allocate added area among counties in proportion to remaining eligible alluvial land, subject to each county's headroom."
+6,shared_land_capacity,Corn and soybean expansion draw from one shared county headroom; hectares cannot be claimed twice.
+7,water_objective,Only groundwater withdrawal enters the water-use objective; total applied irrigation remains available to yield and nitrate models.

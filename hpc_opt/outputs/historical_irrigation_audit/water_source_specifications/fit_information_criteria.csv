@@ -1,0 +1,9 @@
+Crop,model,n,AIC,BIC,singular
+Corn,total_water_curve,534,9725.094013134732,9750.776388168493,FALSE
+Corn,total_water_plus_management,534,9346.14112776946,9376.103898642183,FALSE
+Corn,separate_sources_linear_irrigation,534,9317.532671562098,9347.49544243482,FALSE
+Corn,separate_sources_curved,534,9318.823399632538,9353.06656634422,FALSE
+Soybeans,total_water_curve,574,8858.956250148152,8885.07202652607,FALSE
+Soybeans,total_water_plus_management,574,8709.555817352582,8740.024223126818,FALSE
+Soybeans,separate_sources_linear_irrigation,574,8691.45569083979,8721.924096614026,FALSE
+Soybeans,separate_sources_curved,574,8693.337862689124,8728.158897859681,FALSE

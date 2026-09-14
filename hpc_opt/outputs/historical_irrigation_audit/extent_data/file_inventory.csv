@@ -1,0 +1,6 @@
+file,first_year,last_year,rows
+WaterUseByCrop_EKSRB.csv,1990,2023,282
+WaterUseByCrop_AlluvialCorridor.csv,1990,2023,277
+WaterUseData_EKSRB.csv,1990,2023,136
+WaterUseData_AlluvialCorridor.csv,1990,2023,136
+WaterUseData_County.csv,1990,2023,983

@@ -11,7 +11,7 @@ This is the recommended route for collaborators who want to reproduce the 32 det
 From an R session at the repository root, run:
 
 ```r
-source(here::here("hpc_opt", "scripts", "run_deterministic_packaged.R"))
+source(here::here("hpc_opt", "scripts", "pipeline", "run_deterministic_packaged.R"))
 ```
 
 The runner performs a preflight check, runs all 32 factorial scenarios, and then runs the paired-counterfactual and factorial summary checks. It does not rebuild upstream inputs or models.
@@ -32,7 +32,7 @@ Use this route only when changing climate sources, climate-processing logic, com
 1. Generate the historical climate products with `00_make_climate_inputs_gridmet.R`.
 2. Generate all 30 GCM × scenario MACA products with `00_run_maca_climate_array_worker.R` or the corresponding HPC array jobs.
 3. Generate the six ensemble climate products with `00_make_climate_ensemble.R`.
-4. Run `run_full_pipeline.R` to rebuild common inputs, models, historical integration, precompute objects, deterministic scenarios, and checks.
+4. Run `scripts/pipeline/run_full_pipeline.R` to rebuild common inputs, models, historical integration, precompute objects, deterministic scenarios, and checks.
 
 The large `SAFEKAW data.zip` archive is a raw/emergency backup and is not required for the packaged deterministic route. Do not extract it over a working repository.
 
@@ -46,7 +46,7 @@ The large `SAFEKAW data.zip` archive is a raw/emergency backup and is not requir
 6. Run the deterministic factorial scenarios.
 7. Summarize and quality-check the scenario outputs.
 
-Climate extraction is an expensive preprocessing step and is not run by `hpc_opt/scripts/run_full_pipeline.R`. Common-input construction is part of that full rebuild runner.
+Climate extraction is an expensive preprocessing step and is not run by `hpc_opt/scripts/pipeline/run_full_pipeline.R`. Common-input construction is part of that full rebuild runner.
 
 ## Historical baseline common inputs
 
@@ -156,8 +156,8 @@ Diagnostics, metrics, coefficients, and validation figures are written under `hp
 
 Optional yield-model checking scripts include:
 
-- `hpc_opt/scripts/01b_compare_yield_models.R`
-- `hpc_opt/scripts/01c_validate_yield_models.R`
+- `hpc_opt/scripts/diagnostics/01b_compare_yield_models.R`
+- `hpc_opt/scripts/diagnostics/01c_validate_yield_models.R`
 
 ## 3. Integrate the historical baseline
 
@@ -168,6 +168,8 @@ Optional yield-model checking scripts include:
 - `hpc_opt/outputs/integration/irr_frac_annual.csv`
 
 The historical integration outputs provide the historical anchors used by precomputation and deterministic result normalization.
+
+Corn and soybean crop areas are split into irrigated and non-irrigated management rows using observed basin crop-year irrigated acreage. This preserves total crop area while allowing the matching irrigated and non-irrigated yield observations to be used. See `hpc_opt/HISTORICAL_IRRIGATION_AUDIT.md` for the rationale and measured effect of this correction.
 
 ## 4. Build precompute bundles
 
@@ -239,19 +241,19 @@ Annual and summary outputs report the three objectives (nitrate export, irrigati
 
 ## 6. Check and summarize deterministic runs
 
-`hpc_opt/scripts/05_check_deterministic_factorial.R` reads the factorial directories, compares results with the historical integration baseline, builds normalized summaries, and writes diagnostic figures under:
+`hpc_opt/scripts/diagnostics/05_check_deterministic_factorial.R` reads the 32 run directories declared in the current scenario manifest, compares results with the historical integration baseline, builds normalized summaries, and writes diagnostic figures under:
 
 - `hpc_opt/outputs/factorial_runs/figures/`
 
 Additional targeted checks include:
 
-- `hpc_opt/scripts/05_check_deterministic_counterfactuals.R`, which verifies
+- `hpc_opt/scripts/diagnostics/05_check_deterministic_counterfactuals.R`, which verifies
   matched current/efficient technology and fertilizer relationships;
-- `hpc_opt/scripts/05_check_irrigation_denominators.R`
-- `hpc_opt/scripts/06_compare_irrigation_domains.R`
+- `hpc_opt/scripts/diagnostics/05_check_irrigation_denominators.R`
+- `hpc_opt/scripts/diagnostics/06_compare_irrigation_domains.R`
 
 ## Full rebuild runner
 
-`hpc_opt/scripts/run_full_pipeline.R` builds the historical and future ensemble common inputs, fits models, integrates the historical baseline, builds precompute objects, runs the deterministic factorial scenarios, and performs the checks. It is a rebuild runner, not the collaborator entry point. It assumes the historical GridMET and future ensemble climate files have already been generated from the raw data.
+`hpc_opt/scripts/pipeline/run_full_pipeline.R` builds the historical and future ensemble common inputs, fits models, integrates the historical baseline, builds precompute objects, runs the deterministic factorial scenarios, and performs the checks. It is a rebuild runner, not the collaborator entry point. It assumes the historical GridMET and future ensemble climate files have already been generated from the raw data.
 
 The full rebuild runner and `04_run_factorial_all.R` both use the ensemble climate source. Set the stage flags near the top of `run_full_pipeline.R` to skip outputs that do not need to be regenerated. For a clone containing the packaged derived inputs, use `run_deterministic_packaged.R` instead.

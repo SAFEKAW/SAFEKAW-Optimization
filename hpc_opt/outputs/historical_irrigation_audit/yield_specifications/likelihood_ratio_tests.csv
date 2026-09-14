@@ -1,0 +1,5 @@
+Crop,comparison,added_parameters,chi_square,p_value
+Corn,shared_curve_vs_management_intercept,1,380.95288536527005,7.717982739397515e-85
+Corn,management_intercept_vs_management_curve,2,21.302166505942296,2.367518149137495e-5
+Soybeans,shared_curve_vs_management_intercept,1,151.40043279556812,8.567766440516703e-35
+Soybeans,management_intercept_vs_management_curve,2,6.263954234038465,0.04363144744172805

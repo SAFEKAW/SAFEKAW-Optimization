@@ -22,13 +22,19 @@ df_combined_county <- read_csv(
   show_col_types = FALSE
 ) %>%
   filter(Year %in% yrs_common) %>%
-  mutate(FIPS = as.character(FIPS)) %>%
-  select(-any_of(c("WaterManagement", "is_irrig_hist"))) %>%
-  mutate(
-    is_irrig_hist = FALSE,
-    WaterManagement = "Non-Irrigated"
-  )
-#IRRIG IS NOT RIGHT HERE....
+  mutate(FIPS = as.character(FIPS))
+
+df_wateruse_by_crop <- read_csv(
+  here("data", "WaterUseByCrop_EKSRB.csv"),
+  show_col_types = FALSE
+) %>%
+  filter(Year %in% yrs_common)
+
+df_combined_county <- split_historical_water_management(
+  df_county = df_combined_county,
+  wateruse_by_crop = df_wateruse_by_crop,
+  irrigated_crops = c("Corn", "Soybeans")
+)
 
 common_input_basin <- read_csv(
   here("hpc_opt", "outputs", "common_inputs_basin_hist_baseline.csv"),

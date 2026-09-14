@@ -1,0 +1,41 @@
+Crop,model,term,estimate
+Corn,total_water_curve,(Intercept),-799.5680640032081
+Corn,total_water_curve,"poly(totalWater_m, 2, raw = TRUE)1",41538.83815570847
+Corn,total_water_curve,"poly(totalWater_m, 2, raw = TRUE)2",-21905.05841655883
+Corn,total_water_curve,GDD_1000,-3467.3038327140125
+Corn,total_water_plus_management,(Intercept),9750.280004564356
+Corn,total_water_plus_management,"poly(totalWater_m, 2, raw = TRUE)1",25531.48958414107
+Corn,total_water_plus_management,"poly(totalWater_m, 2, raw = TRUE)2",-14473.967966061802
+Corn,total_water_plus_management,GDD_1000,-5453.853309922518
+Corn,total_water_plus_management,WaterManagementIrrigated,3277.0281898304393
+Corn,separate_sources_linear_irrigation,(Intercept),15971.254587929428
+Corn,separate_sources_linear_irrigation,"poly(precip_gs_m, 2, raw = TRUE)1",16954.671669257554
+Corn,separate_sources_linear_irrigation,"poly(precip_gs_m, 2, raw = TRUE)2",-8480.726435138838
+Corn,separate_sources_linear_irrigation,irrigation_WaterUse_m,30145.160947323544
+Corn,separate_sources_linear_irrigation,GDD_1000,-6978.336747548496
+Corn,separate_sources_curved,(Intercept),15616.543062158638
+Corn,separate_sources_curved,"poly(precip_gs_m, 2, raw = TRUE)1",18019.55461382462
+Corn,separate_sources_curved,"poly(precip_gs_m, 2, raw = TRUE)2",-9053.259054232718
+Corn,separate_sources_curved,"poly(irrigation_WaterUse_m, 2, raw = TRUE)1",27240.028492911817
+Corn,separate_sources_curved,"poly(irrigation_WaterUse_m, 2, raw = TRUE)2",20021.308198831037
+Corn,separate_sources_curved,GDD_1000,-7019.178962339872
+Soybeans,total_water_curve,(Intercept),589.0660604780549
+Soybeans,total_water_curve,"poly(totalWater_m, 2, raw = TRUE)1",8501.323684761712
+Soybeans,total_water_curve,"poly(totalWater_m, 2, raw = TRUE)2",-3904.3599391171942
+Soybeans,total_water_curve,GDD_1000,-622.7055652541749
+Soybeans,total_water_plus_management,(Intercept),2402.129607977733
+Soybeans,total_water_plus_management,"poly(totalWater_m, 2, raw = TRUE)1",5803.05625399943
+Soybeans,total_water_plus_management,"poly(totalWater_m, 2, raw = TRUE)2",-2655.587580091948
+Soybeans,total_water_plus_management,GDD_1000,-971.4320181144428
+Soybeans,total_water_plus_management,WaterManagementIrrigated,553.2413998606227
+Soybeans,separate_sources_linear_irrigation,(Intercept),3241.917186189825
+Soybeans,separate_sources_linear_irrigation,"poly(precip_gs_m, 2, raw = TRUE)1",4747.271050565004
+Soybeans,separate_sources_linear_irrigation,"poly(precip_gs_m, 2, raw = TRUE)2",-1913.995099184185
+Soybeans,separate_sources_linear_irrigation,irrigation_WaterUse_m,6339.292291605829
+Soybeans,separate_sources_linear_irrigation,GDD_1000,-1195.4245759841388
+Soybeans,separate_sources_curved,(Intercept),3196.217152998244
+Soybeans,separate_sources_curved,"poly(precip_gs_m, 2, raw = TRUE)1",4881.568072278797
+Soybeans,separate_sources_curved,"poly(precip_gs_m, 2, raw = TRUE)2",-1986.3182182034204
+Soybeans,separate_sources_curved,"poly(irrigation_WaterUse_m, 2, raw = TRUE)1",5977.103937421804
+Soybeans,separate_sources_curved,"poly(irrigation_WaterUse_m, 2, raw = TRUE)2",2503.5830727418397
+Soybeans,separate_sources_curved,GDD_1000,-1200.109684571986

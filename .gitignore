@@ -334,6 +334,11 @@ hpc_opt/outputs/common_inputs_county_ccsm4_rcp45_mid.csv
 hpc_opt/outputs/common_inputs_county_ccsm4_rcp45_late.csv
 hpc_opt/outputs/common_inputs_county_ccsm4_rcp45_early.csv
 hpc_opt/outputs/common_inputs_county.csv
+hpc_opt/outputs/historical_irrigation_audit/before/
+hpc_opt/outputs/deterministic_factorial_grid_32_scenarios.csv
+hpc_opt/outputs/factorial_checks/
+hpc_opt/outputs/factorial_runs/
+data/raw/wimas/
 hpc_opt/outputs/common_inputs_basin_ensemble_rcp85_mid.csv
 hpc_opt/outputs/common_inputs_basin_ensemble_rcp85_late.csv
 hpc_opt/outputs/common_inputs_basin_ensemble_rcp85_early.csv

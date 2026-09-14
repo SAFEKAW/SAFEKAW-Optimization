@@ -337,6 +337,7 @@ eval_candidate_year <- function(
 
   df_rows <- df_rows %>%
     mutate(
+      precip_gs_m = precip_gs_m_use,
       totalWater_m = precip_gs_m_use + irrigation_WaterUse_m
     )
   

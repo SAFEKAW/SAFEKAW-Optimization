@@ -28,6 +28,102 @@ build_irrig_flags <- function(df) {
   is_irrig_depth | is_irrig_text
 }
 
+# --- Historical irrigated/rainfed area split -----------------------------
+# County common inputs contain one row for the full county crop area and an
+# irrigation depth, but no county irrigated acreage. Split corn and soybean
+# rows using the observed basin crop-year irrigated area so that management
+# classes can be joined to the corresponding observed yield series without
+# treating the full crop area as either entirely irrigated or entirely dryland.
+split_historical_water_management <- function(
+    df_county,
+    wateruse_by_crop,
+    irrigated_crops = c("Corn", "Soybeans"),
+    area_total_col = "area_ha",
+    area_columns = c("area_m2", "area_ha", "area_prc", "fertilizer_kgCrop")) {
+  required_county <- c("Year", "Crop", area_total_col)
+  required_wateruse <- c("Year", "Crop", "irrArea_ha")
+  if (!all(required_county %in% names(df_county))) {
+    stop("County inputs are missing: ",
+         paste(setdiff(required_county, names(df_county)), collapse = ", "))
+  }
+  if (!all(required_wateruse %in% names(wateruse_by_crop))) {
+    stop("Water-use inputs are missing: ",
+         paste(setdiff(required_wateruse, names(wateruse_by_crop)), collapse = ", "))
+  }
+
+  crop_totals <- df_county %>%
+    filter(Crop %in% irrigated_crops) %>%
+    group_by(Year, Crop) %>%
+    summarise(crop_area_ha = sum(.data[[area_total_col]], na.rm = TRUE),
+              .groups = "drop")
+
+  irrigation_shares <- wateruse_by_crop %>%
+    filter(Crop %in% irrigated_crops) %>%
+    select(Year, Crop, observed_irrigated_area_ha = irrArea_ha) %>%
+    left_join(crop_totals, by = c("Year", "Crop")) %>%
+    mutate(
+      irrigated_share = observed_irrigated_area_ha / crop_area_ha,
+      irrigated_share = pmax(0, pmin(1, irrigated_share))
+    )
+
+  needed <- crop_totals %>% select(Year, Crop)
+  missing_shares <- anti_join(
+    needed,
+    irrigation_shares %>% filter(is.finite(irrigated_share)) %>% select(Year, Crop),
+    by = c("Year", "Crop")
+  )
+  if (nrow(missing_shares) > 0L) {
+    stop("Missing observed irrigated-area shares for ", nrow(missing_shares),
+         " historical crop-year combinations.")
+  }
+
+  other_rows <- df_county %>%
+    filter(is.na(Crop) | !Crop %in% irrigated_crops) %>%
+    mutate(
+      is_irrig_hist = FALSE,
+      WaterManagement = "Non-Irrigated",
+      management_area_share = 1,
+      crop_area_ha_unsplit = .data[[area_total_col]]
+    )
+
+  split_base <- df_county %>%
+    filter(Crop %in% irrigated_crops) %>%
+    left_join(
+      irrigation_shares %>% select(Year, Crop, irrigated_share),
+      by = c("Year", "Crop")
+    ) %>%
+    mutate(crop_area_ha_unsplit = .data[[area_total_col]])
+
+  make_management_rows <- function(dat, irrigated) {
+    dat %>%
+      mutate(
+        is_irrig_hist = irrigated,
+        WaterManagement = if (irrigated) "Irrigated" else "Non-Irrigated",
+        management_area_share = if (irrigated) irrigated_share else 1 - irrigated_share,
+        across(any_of(area_columns), ~ .x * management_area_share)
+      ) %>%
+      select(-irrigated_share)
+  }
+
+  out <- bind_rows(
+    other_rows,
+    make_management_rows(split_base, TRUE),
+    make_management_rows(split_base, FALSE)
+  )
+
+  area_check <- out %>%
+    filter(Crop %in% irrigated_crops) %>%
+    group_by(Year, Crop) %>%
+    summarise(split_area_ha = sum(.data[[area_total_col]], na.rm = TRUE),
+              .groups = "drop") %>%
+    left_join(crop_totals, by = c("Year", "Crop"))
+  if (any(abs(area_check$split_area_ha - area_check$crop_area_ha) > 1e-6)) {
+    stop("Historical management split failed to preserve crop area.")
+  }
+
+  out
+}
+
 # --- Crop-specific historical irrigated fraction (used by allocate_irrigation) ---
 build_hist_mix_from_county <- function(df_county, years_vec) {
   stopifnot(all(c("Year","Crop") %in% names(df_county)))

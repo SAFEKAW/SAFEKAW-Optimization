@@ -69,6 +69,7 @@ integrate_historical <- function(df_combined_county,
         0,
         coalesce(irrigation_WaterUse_m, 0)
       ),
+      precip_gs_m = precip_gs_m_use,
       totalWater_m = precip_gs_m_use + irrigation_WaterUse_m
     )
   
@@ -90,7 +91,8 @@ integrate_historical <- function(df_combined_county,
   # optional area threshold (kept)
   if ("area_ha" %in% names(df_crop)) {
     area_ha_thres <- 64.75 * 10
-    df_crop <- df_crop %>% filter(area_ha > area_ha_thres)
+    df_crop <- df_crop %>%
+      filter(coalesce(crop_area_ha_unsplit, area_ha) > area_ha_thres)
   }
   
   # ---- 3) Yield predictions (NO fitting; fixed effects only recommended) ----
@@ -133,7 +135,10 @@ integrate_historical <- function(df_combined_county,
       
       NetReturn_ha  = weighted.mean(NetReturn_dollar_ha, w = area_m2, na.rm = TRUE),
       
-      Crop_prc = mean(area_prc, na.rm = TRUE),
+      # Management splitting creates two rows per county for irrigated crops.
+      # Sum their scaled shares, then average by county so the crop-mix anchor
+      # is invariant to the number of management classes.
+      Crop_prc = sum(area_prc, na.rm = TRUE) / n_distinct(FIPS),
       .groups = "drop"
     ) %>%
     left_join(wq_pred %>% select(Year, NitrateFluxPredicted_kg), by = "Year")

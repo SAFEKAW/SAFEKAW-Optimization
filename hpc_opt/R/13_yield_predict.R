@@ -69,7 +69,8 @@ predict_one_yield_model <- function(m, newdata, fixed_only = TRUE) {
 }
 
 # Predict from already-fit yield models
-# df must contain: Crop, totalWater_m, GDD (and any other fixed-effect terms)
+# df must contain the predictors required by each saved crop model. Current
+# models use totalWater_m or precip_gs_m plus irrigation_WaterUse_m, and GDD.
 predict_yields <- function(df, yield_kg_models, yield_kcal_models,
                            fixed_only = TRUE) {
   

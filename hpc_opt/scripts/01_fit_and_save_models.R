@@ -87,12 +87,16 @@ df_crop_climate <- read_csv(
   ) %>%
   select(FIPS, Year, Crop, GDD, precip_gs_m)
 
-df_combined_county2 <- df_combined_county %>%
-  mutate(
-    FIPS = as.character(FIPS),
-    is_irrig_hist = build_irrig_flags(cur_data_all()),
-    WaterManagement = if_else(is_irrig_hist, "Irrigated", "Non-Irrigated")
-  )
+df_wateruse_by_crop <- read_csv(
+  here("data", "WaterUseByCrop_EKSRB.csv"),
+  show_col_types = FALSE
+)
+
+df_combined_county2 <- split_historical_water_management(
+  df_county = df_combined_county %>% mutate(FIPS = as.character(FIPS)),
+  wateruse_by_crop = df_wateruse_by_crop,
+  irrigated_crops = c("Corn", "Soybeans")
+)
 
 # -----------------------------
 # 1. Irrigation model
@@ -197,7 +201,8 @@ df_crop <- irr_aug %>%
 
 if ("area_ha" %in% names(df_crop)) {
   area_ha_thres <- 64.75 * 10
-  df_crop <- df_crop %>% filter(area_ha > area_ha_thres)
+  df_crop <- df_crop %>%
+    filter(coalesce(crop_area_ha_unsplit, area_ha) > area_ha_thres)
 }
 
 # -----------------------------
@@ -316,6 +321,8 @@ for (cr in crops) {
       is.finite(yield_kgHa_detrended),
       is.finite(yield_kcalHa_detrended),
       is.finite(totalWater_m),
+      is.finite(precip_gs_m),
+      is.finite(irrigation_WaterUse_m),
       is.finite(GDD)
     )
   
@@ -358,6 +365,26 @@ for (cr in crops) {
     attr(m_kcal, "yield_scaling") <- wheat_scaling
   }
   
+  else if (cr %in% c("Corn", "Soybeans")) {
+    # Fit one crop-specific response across both management classes. Rainfall
+    # and irrigation enter separately because the diagnostic audit showed that
+    # treating them as interchangeable total water obscures the yield response.
+    # Rainfed observations have irrigation_WaterUse_m == 0.
+    m_kg <- lmer(
+      yield_kgHa_detrended ~ poly(precip_gs_m, 2, raw = TRUE) +
+        irrigation_WaterUse_m + GDD + (1 | FIPS),
+      data = dat_cr,
+      REML = TRUE
+    )
+
+    m_kcal <- lmer(
+      yield_kcalHa_detrended ~ poly(precip_gs_m, 2, raw = TRUE) +
+        irrigation_WaterUse_m + GDD + (1 | FIPS),
+      data = dat_cr,
+      REML = TRUE
+    )
+  }
+
   else {
     m_kg <- lmer(
       yield_kgHa_detrended ~ poly(totalWater_m, 2, raw = TRUE) + GDD + (1 | FIPS),
@@ -470,6 +497,16 @@ ggsave(
 )
 
 # Diagnostics from the final saved model specifications.
+required_prediction_fields <- c(
+  "precip_gs_m", "irrigation_WaterUse_m", "totalWater_m", "GDD"
+)
+missing_prediction_fields <- setdiff(required_prediction_fields, names(df_crop))
+if (length(missing_prediction_fields) > 0) {
+  stop(
+    "Yield diagnostic data are missing: ",
+    paste(missing_prediction_fields, collapse = ", ")
+  )
+}
 df_crop_pred <- predict_yields(
     df = df_crop,
     yield_kg_models = yield_kg_models,
@@ -500,21 +537,23 @@ write_model_check_csv(
 )
 
 r2_df <- final_yield_metrics %>%
-  mutate(label = paste0("R² = ", round(R2, 2)))
+  mutate(label = paste0("R2 = ", round(R2, 2)))
 
 
-p_yield_obs_pred <- ggplot(df_crop_pred, aes(x = yield_kgHa_detrended, y = yield_kgHa_pred, color = WaterManagement)) +
-  geom_point(alpha = 0.6) +
-  facet_wrap(~ Crop, scales = "free_y") +
+p_yield_obs_pred <- ggplot(
+  df_crop_pred,
+  aes(x = yield_kgHa_pred, y = yield_kgHa_detrended, color = WaterManagement)
+) +
   geom_abline(intercept = 0, slope = 1, color = "red", linetype = "dashed") +
-  geom_point(aes(color = WaterManagement), alpha = 0.6) +
+  geom_point(alpha = 0.6) +
   facet_wrap(~ Crop, scales = "free") +
-  #stat_smooth(method = "lm", color = "black") +
-  scale_color_manual( values =c("lightblue", "orange")) +
+  scale_color_manual(values = c(
+    "Irrigated" = "lightblue", "Non-Irrigated" = "orange"
+  )) +
   labs(x = "Predicted Yield (kg/ha)", y = "Observed Yield (kg/ha)",
        title = "Predicted vs Observed Yield") +
   geom_text(data = r2_df, aes(x = Inf, y = Inf, label = label),
-            inherit.aes = FALSE, hjust = 4.1, vjust = 1.2, size = 3.5) +
+            inherit.aes = FALSE, hjust = 1.15, vjust = 1.2, size = 3.5) +
   theme_test(base_size = 14) + 
   theme(legend.position = "none")
 
@@ -530,10 +569,13 @@ p_yield_resid <- df_crop_pred %>%
   ggplot(aes(x = totalWater_m, y = resid_kg, color = WaterManagement)) + #FIPS
   geom_point(alpha = 0.6) +
   geom_hline(yintercept = 0, linetype = "dashed", color = "black") +
-  scale_color_manual( values =c("lightblue", "orange")) +
+  scale_color_manual(values = c(
+    "Irrigated" = "lightblue", "Non-Irrigated" = "orange"
+  )) +
   facet_wrap(~ Crop, scales = "free") +
-  labs(x = "Total water (m)", y = "resid (kg)",
-       title = "Residuals v Total water") +
+  labs(x = "Total growing-season water (m)",
+       y = "Residual: observed - predicted (kg/ha)",
+       title = "Residuals vs Total Water") +
   #geom_line(aes(y = yield_kgHa_detrended_fit), color = "grey40", linewidth = 0.7, alpha = 0.6) +
   theme_test(base_size = 12) + theme(legend.position = "bottom")
 p_yield_resid
@@ -635,6 +677,8 @@ water_effect_df <- df_crop %>%
     tibble(
       Crop = .$Crop,
       totalWater_m = seq(.$water_min, .$water_max, length.out = 100),
+      precip_gs_m = seq(.$water_min, .$water_max, length.out = 100),
+      irrigation_WaterUse_m = 0,
       GDD = .$GDD,
       Year = .$Year,
       FIPS = .$FIPS

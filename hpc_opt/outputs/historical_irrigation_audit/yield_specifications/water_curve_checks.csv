@@ -1,0 +1,13 @@
+Crop,model,WaterManagement,min_predicted_yield,max_predicted_yield,fraction_negative
+Corn,management_curve,Irrigated,11116.101163888172,12506.50037233213,0
+Corn,management_curve,Non-Irrigated,4756.142563910362,9111.028566470337,0
+Corn,management_intercept,Irrigated,8296.925256692262,12271.015973422509,0
+Corn,management_intercept,Non-Irrigated,5019.897067586029,8993.987784316276,0
+Corn,shared_curve,Irrigated,3624.7088259067095,11254.220389329521,0
+Corn,shared_curve,Non-Irrigated,3624.7088259067095,11254.220389329521,0
+Soybeans,management_curve,Irrigated,3280.9922561951485,4122.9435937914795,0
+Soybeans,management_curve,Non-Irrigated,1930.6867707236129,3445.554495944009,0
+Soybeans,management_intercept,Irrigated,2550.353028741895,3983.509015892983,0
+Soybeans,management_intercept,Non-Irrigated,1997.111629063439,3430.267616214527,0
+Soybeans,shared_curve,Irrigated,1758.932967468833,3843.6152357137653,0
+Soybeans,shared_curve,Non-Irrigated,1758.932967468833,3843.6152357137653,0

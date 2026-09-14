@@ -37,32 +37,34 @@ hist_nitrate <- hist_ref$hist_nitrate_kgyr[[1]]
 hist_irrig   <- hist_ref$hist_irrigation_m3yr[[1]]
 hist_profit  <- hist_ref$hist_profit_usdyr[[1]]
 
-# ---- locate all factorial run folders ----
+# ---- locate the current factorial run folders ----
 run_root <- here("hpc_opt", "outputs", "factorial_runs")
-run_dirs <- list.dirs(run_root, recursive = FALSE, full.names = TRUE)
-
-#climate_pathway <- "rcp85"
-
-#if (!is.null(climate_pathway) && nzchar(climate_pathway)) {
- # run_dirs <- run_dirs[str_detect(basename(run_dirs), paste0("__", climate_pathway, "$"))]
-#}
-
-#if (length(run_dirs) == 0) stop("No factorial run folders found.")
-
-climate_source <- "ensemble"
-climate_pathway <- NULL
-
-if (!is.null(climate_source) && nzchar(climate_source)) {
-  run_dirs <- run_dirs[str_detect(basename(run_dirs), paste0("_", climate_source, "_"))]
+figure_dir <- file.path(run_root, "figures")
+dir.create(figure_dir, recursive = TRUE, showWarnings = FALSE)
+manifest_path <- here(
+  "hpc_opt", "outputs", "deterministic_factorial_grid_32_scenarios.csv"
+)
+if (!file.exists(manifest_path)) {
+  stop(
+    "Missing current deterministic scenario manifest: ", manifest_path,
+    ". Run 04_run_factorial_all.R first."
+  )
 }
 
-if (is.null(climate_pathway)) {
-  run_dirs <- run_dirs[str_detect(basename(run_dirs), "_(rcp45|rcp85)$")]
-} else {
-  run_dirs <- run_dirs[str_detect(basename(run_dirs), paste0("_", climate_pathway, "$"))]
+manifest <- read_csv(manifest_path, show_col_types = FALSE)
+if (!all(c("scenario_id", "combo_name") %in% names(manifest)) ||
+    nrow(manifest) != 32L || anyDuplicated(manifest$combo_name)) {
+  stop("The deterministic manifest must contain 32 unique combo_name rows.")
 }
 
-if (length(run_dirs) == 0) stop("No factorial run folders found.")
+run_dirs <- file.path(run_root, manifest$combo_name)
+missing_run_dirs <- run_dirs[!dir.exists(run_dirs)]
+if (length(missing_run_dirs) > 0L) {
+  stop(
+    "Missing run directories declared by the current manifest:\n - ",
+    paste(missing_run_dirs, collapse = "\n - ")
+  )
+}
 
 # ---- helper to read one combo ----
 read_one_combo <- function(dir_path) {
@@ -375,16 +377,16 @@ hist_obj_plot <- hist_obj %>%
   mutate(
     metric = recode(
       metric,
-      irrigation = "Irrigation water use\n(million m³ yr⁻¹)",
-      nitrate = "Nitrate export\n(million kg N yr⁻¹)",
-      profit = "Net returns\n(million USD yr⁻¹)"
+      irrigation = "Irrigation water use\n(million m3/year)",
+      nitrate = "Nitrate export\n(million kg N/year)",
+      profit = "Net returns\n(million USD/year)"
     ),
     metric = factor(
       metric,
       levels = c(
-        "Nitrate export\n(million kg N yr⁻¹)",
-        "Irrigation water use\n(million m³ yr⁻¹)",
-        "Net returns\n(million USD yr⁻¹)"
+        "Nitrate export\n(million kg N/year)",
+        "Irrigation water use\n(million m3/year)",
+        "Net returns\n(million USD/year)"
       )
     )
   ) %>%
@@ -476,9 +478,9 @@ summary_long_plot <- summary_long %>%
     ),
     metric = dplyr::recode(
       as.character(metric),
-      "irrigation" = "Irrigation water use\n(million m³ yr⁻¹)",
-      "nitrate"    = "Nitrate export\n(million kg N yr⁻¹)",
-      "profit"     = "Net returns\n(million USD yr⁻¹)"
+      "irrigation" = "Irrigation water use\n(million m3/year)",
+      "nitrate"    = "Nitrate export\n(million kg N/year)",
+      "profit"     = "Net returns\n(million USD/year)"
     )
   )
 
@@ -487,16 +489,16 @@ summary_long_plot <- summary_long_plot %>%
   mutate(
     metric = dplyr::recode(
       as.character(metric),
-      "irrigation" = "Irrigation water use\n(million m³ yr⁻¹)",
-      "nitrate"    = "Nitrate export\n(million kg N yr⁻¹)",
-      "profit"     = "Net returns\n(million USD yr⁻¹)"
+      "irrigation" = "Irrigation water use\n(million m3/year)",
+      "nitrate"    = "Nitrate export\n(million kg N/year)",
+      "profit"     = "Net returns\n(million USD/year)"
     ),
     metric = factor(
       metric,
       levels = c(
-        "Nitrate export\n(million kg N yr⁻¹)",
-        "Irrigation water use\n(million m³ yr⁻¹)",
-        "Net returns\n(million USD yr⁻¹)"
+        "Nitrate export\n(million kg N/year)",
+        "Irrigation water use\n(million m3/year)",
+        "Net returns\n(million USD/year)"
       )
     )
   )

@@ -73,6 +73,6 @@ if (tolower(Sys.getenv("SAFEKAW_PREFLIGHT_ONLY", unset = "false")) %in%
 }
 
 run_stage("04_run_factorial_all.R")
-run_stage("05_check_deterministic_counterfactuals.R")
-run_stage("05_check_deterministic_factorial.R")
+run_stage(file.path("diagnostics", "05_check_deterministic_counterfactuals.R"))
+run_stage(file.path("diagnostics", "05_check_deterministic_factorial.R"))
 message("\nPackaged deterministic workflow complete.")
