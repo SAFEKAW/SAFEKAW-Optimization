@@ -1,19 +1,13 @@
 
-if (!requireNamespace("pacman", quietly = TRUE)) {
-  install.packages("pacman")
-}
-library(pacman)
-p_load(dplyr, tibble, here)
-
-
-
 library(dplyr)
 library(tibble)
 library(here)
+library(readr)
+library(tidyr)
 
-
-source(here(file.path("code","paths+packages.R")) )        #loads path & packages (from original files)
-source(here(file.path("code/optimization", "01.5_model_wrappers.R")) )  # loads model wrappers
+# Keep this app-preparation step independent of the repository-wide package
+# bootstrap. The app only needs the economic parameters defined below; loading
+# paths+packages.R also requires unrelated GIS and plotting packages.
 source(here("StakeholderMeetingTradeoffs/R_app/econ.R"))
 
 
@@ -22,14 +16,15 @@ years_curr <- 2006:2023
 crops4     <- c("Corn","Soybeans","Sorghum","Wheat")
 
 get_area_m2 <- function(df, area_m2_col = "Crop_area_m2", area_ha_col = "Crop_area_ha") {
-  df %>%
-    mutate(
-      area_m2 = case_when(
-        area_m2_col %in% names(.) ~ .data[[area_m2_col]],
-        area_ha_col %in% names(.) ~ .data[[area_ha_col]] * 1e4,
-        TRUE                      ~ NA_real_
-      )
-    )
+  if (area_m2_col %in% names(df)) {
+    df$area_m2 <- df[[area_m2_col]]
+  } else if (area_ha_col %in% names(df)) {
+    df$area_m2 <- df[[area_ha_col]] * 1e4
+  } else {
+    df$area_m2 <- NA_real_
+  }
+
+  df
 }
 
 
